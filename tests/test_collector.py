@@ -31,4 +31,5 @@ def test_collector_only_updates_the_evidence_section_of_a_case_file() -> None:
 
     assert case_file.evidence == []
     assert case_file.suspect_profiles == []
-    assert case_file.timeline_notes == []
+    assert case_file.timeline.events == []
+    assert case_file.timeline.issues == []

@@ -16,10 +16,16 @@ from llm_client import EnvLLMClient
 from orchestrator import InvestigationEventKind, stream_investigation
 
 PROGRESS_LABELS = {
-    InvestigationEventKind.EVIDENCE_COLLECTION_STARTED: "🔎 Evidence Collector is reading the case...",
+    InvestigationEventKind.EVIDENCE_COLLECTION_STARTED: (
+        "🔎 Evidence Collector is reading the case..."
+    ),
     InvestigationEventKind.EVIDENCE_COLLECTION_COMPLETED: "✅ Evidence Collector finished.",
     InvestigationEventKind.SUSPECT_ANALYSIS_STARTED: "🕵️ Suspect Analyst is building profiles...",
     InvestigationEventKind.SUSPECT_ANALYSIS_COMPLETED: "✅ Suspect Analyst finished.",
+    InvestigationEventKind.TIMELINE_RECONCILIATION_STARTED: (
+        "🕰️ Timeline Reconciler is ordering events..."
+    ),
+    InvestigationEventKind.TIMELINE_RECONCILIATION_COMPLETED: "✅ Timeline Reconciler finished.",
 }
 
 
@@ -54,17 +60,44 @@ def render_suspect_profiles(case_file: CaseFile) -> str:
     return "\n".join(lines)
 
 
-def run_investigation(mystery_text: str) -> Iterator[tuple[str, str, str]]:
+def render_timeline(case_file: CaseFile) -> str:
+    if case_file.timeline.is_empty:
+        return "_No timeline analysis yet._"
+
+    lines = ["**Events**"]
+    for event in case_file.timeline.events:
+        citations = ", ".join(event.evidence_ids)
+        if event.status is ClaimStatus.UNKNOWN:
+            lines.append(
+                f"- _uncertain / unordered:_ {event.statement} ({citations})"
+            )
+        else:
+            lines.append(f"- {event.time} — {event.statement} ({citations})")
+
+    lines.append("**Gaps and contradictions**")
+    for issue in case_file.timeline.issues:
+        citations = ", ".join(issue.evidence_ids)
+        lines.append(f"- {issue.kind.value.title()}: {issue.statement} ({citations})")
+    return "\n".join(lines)
+
+
+def run_investigation(mystery_text: str) -> Iterator[tuple[str, str, str, str]]:
     llm = EnvLLMClient()
     transcript_lines: list[str] = []
     for event in stream_investigation(mystery_text, llm):
         if event.kind is InvestigationEventKind.VALIDATION_ERROR:
-            yield event.message or "", "", ""
+            yield event.message or "", "", "", ""
             return
         transcript_lines.append(PROGRESS_LABELS[event.kind])
         evidence_markdown = render_case_file(event.case_file) if event.case_file else ""
         suspects_markdown = render_suspect_profiles(event.case_file) if event.case_file else ""
-        yield "\n".join(transcript_lines), evidence_markdown, suspects_markdown
+        timeline_markdown = render_timeline(event.case_file) if event.case_file else ""
+        yield (
+            "\n".join(transcript_lines),
+            evidence_markdown,
+            suspects_markdown,
+            timeline_markdown,
+        )
 
 
 def build_interface() -> gr.Blocks:
@@ -79,11 +112,12 @@ def build_interface() -> gr.Blocks:
         transcript = gr.Markdown(label="Investigation transcript")
         evidence_table = gr.Markdown(label="Collected evidence")
         suspect_profiles = gr.Markdown(label="Suspect profiles")
+        timeline = gr.Markdown(label="Timeline analysis")
 
         start_button.click(
             fn=run_investigation,
             inputs=mystery_input,
-            outputs=[transcript, evidence_table, suspect_profiles],
+            outputs=[transcript, evidence_table, suspect_profiles, timeline],
         )
     return interface
 

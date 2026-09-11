@@ -157,4 +157,5 @@ def test_suspect_analyst_only_updates_its_own_case_file_section() -> None:
 
     assert case_file.evidence == original_evidence
     assert case_file.suspect_profiles == []
-    assert case_file.timeline_notes == []
+    assert case_file.timeline.events == []
+    assert case_file.timeline.issues == []

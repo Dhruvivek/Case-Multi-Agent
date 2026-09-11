@@ -50,6 +50,42 @@ class SuspectProfile(BaseModel):
     opportunity: tuple[Claim, ...]
 
 
+class TimelineEvent(BaseModel):
+    """An event placed in time, or explicitly left unordered."""
+
+    statement: str
+    time: str | None
+    order: int | None
+    status: ClaimStatus
+    evidence_ids: tuple[str, ...]
+
+
+class TimelineIssueKind(str, Enum):
+    """A missing link or a conflict exposed while reconciling events."""
+
+    GAP = "gap"
+    CONTRADICTION = "contradiction"
+
+
+class TimelineIssue(BaseModel):
+    """An evidence-cited gap or contradiction in the timeline."""
+
+    kind: TimelineIssueKind
+    statement: str
+    evidence_ids: tuple[str, ...]
+
+
+class Timeline(BaseModel):
+    """The Timeline Reconciler's ordered events and unresolved issues."""
+
+    events: list[TimelineEvent] = Field(default_factory=list)
+    issues: list[TimelineIssue] = Field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.events and not self.issues
+
+
 class CaseFile(BaseModel):
     """The shared, structured state for one investigation.
 
@@ -60,4 +96,4 @@ class CaseFile(BaseModel):
     mystery_text: str
     evidence: list[EvidenceItem] = Field(default_factory=list)
     suspect_profiles: list[SuspectProfile] = Field(default_factory=list)
-    timeline_notes: list[dict] = Field(default_factory=list)
+    timeline: Timeline = Field(default_factory=Timeline)

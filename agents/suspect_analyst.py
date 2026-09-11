@@ -8,6 +8,11 @@ unknown rather than presented as fact.
 
 from __future__ import annotations
 
+from agents._shared import (
+    format_evidence_prompt,
+    require_evidence_ids,
+    validate_known_evidence_ids,
+)
 from case_file import CaseFile, Claim, ClaimStatus, SuspectProfile
 from llm_client import LLMClient
 
@@ -59,7 +64,7 @@ class SuspectAnalyst:
 
     def run(self, case_file: CaseFile) -> CaseFile:
         response = self._llm.call_llm(
-            prompt=self._build_prompt(case_file),
+            prompt=format_evidence_prompt(case_file),
             system=SYSTEM_PROMPT,
             response_schema=RESPONSE_SCHEMA,
         )
@@ -70,14 +75,6 @@ class SuspectAnalyst:
         ]
         case_file.suspect_profiles = profiles
         return case_file
-
-    @staticmethod
-    def _build_prompt(case_file: CaseFile) -> str:
-        evidence_lines = "\n".join(
-            f"{item.id} ({item.classification.value}): {item.statement}"
-            for item in case_file.evidence
-        )
-        return f"Mystery:\n{case_file.mystery_text}\n\nEvidence:\n{evidence_lines}"
 
     @classmethod
     def _parse_profile(cls, raw_suspect: dict, known_evidence_ids: set[str]) -> SuspectProfile:
@@ -105,17 +102,11 @@ class SuspectAnalyst:
                     f"Invalid {section} claim status: {raw_claim['status']!r}"
                 ) from exc
 
-            evidence_ids = tuple(raw_claim["evidence_ids"])
-            if status is ClaimStatus.SUPPORTED and not evidence_ids:
-                raise ValueError(
-                    f"A supported {section} claim must cite at least one evidence ID: "
-                    f"{raw_claim['statement']!r}"
-                )
-            unknown_ids = [eid for eid in evidence_ids if eid not in known_evidence_ids]
-            if unknown_ids:
-                raise ValueError(
-                    f"{section} claim cites evidence IDs not in the case file: {unknown_ids}"
-                )
+            evidence_ids = validate_known_evidence_ids(
+                raw_claim["evidence_ids"], known_evidence_ids, f"{section} claim"
+            )
+            if status is ClaimStatus.SUPPORTED:
+                require_evidence_ids(evidence_ids, f"A supported {section} claim")
 
             claims.append(
                 Claim(
