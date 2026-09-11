@@ -18,6 +18,7 @@ from case_file import (
     VerdictReviewError,
     VerdictReviewStatus,
 )
+from llm_client import LLMError
 from orchestrator import (
     EMPTY_GUIDANCE_MESSAGE,
     InvestigationEventKind,
@@ -678,3 +679,175 @@ def test_empty_guidance_note_produces_validation_event_without_calling_the_llm()
     assert llm.prompts == []
     assert case_file.human_notes == []
     assert case_file.verdict.review_status is VerdictReviewStatus.AWAITING_REVIEW
+
+
+def _canned_response(expected_key: str, evidence_id: str) -> dict:
+    """A minimal valid response for whichever agent a stage represents."""
+    if expected_key == "evidence":
+        return {
+            "evidence": [
+                {
+                    "id": evidence_id,
+                    "statement": "The window was open at midnight.",
+                    "classification": "observed_fact",
+                }
+            ]
+        }
+    if expected_key == "suspects":
+        return {
+            "suspects": [
+                {
+                    "name": "The Butler",
+                    "motive": [
+                        {
+                            "statement": "Owed the victim money.",
+                            "status": "supported",
+                            "evidence_ids": [evidence_id],
+                        }
+                    ],
+                    "opportunity": [
+                        {
+                            "statement": "Was alone in the study.",
+                            "status": "supported",
+                            "evidence_ids": [evidence_id],
+                        }
+                    ],
+                }
+            ]
+        }
+    if expected_key == "events":
+        return {
+            "events": [
+                {
+                    "statement": "The window was opened.",
+                    "time": "midnight",
+                    "order": 1,
+                    "status": "supported",
+                    "evidence_ids": [evidence_id],
+                }
+            ],
+            "issues": [],
+        }
+    if expected_key == "findings":
+        return {"findings": []}
+    if expected_key == "conclusions":
+        return _verdict_response(suspect="The Butler", evidence_id=evidence_id)
+    raise AssertionError(f"No canned response for {expected_key!r}.")
+
+
+@dataclass
+class FailingAtLLM:
+    """Raises `LLMError` for the agent(s) named by `fail_when`, else succeeds.
+
+    `fail_when` is a system-prompt substring, or a tuple of them to fail more
+    than one agent (e.g. both specialists that run concurrently). Models what
+    `EnvLLMClient` raises once its own internal reformat retry has also
+    failed: a single `LLMError` from `call_llm`. Every other agent gets back
+    a minimal valid response so a halt at `fail_when` can be distinguished
+    from an unrelated failure earlier in the pipeline. `evidence_id` must
+    match any evidence already on the case file (e.g. for a re-investigation,
+    which reuses previously collected evidence).
+    """
+
+    fail_when: str | tuple[str, ...]
+    evidence_id: str = "E-01"
+    calls: list[str] = field(default_factory=list)
+
+    def call_llm(self, prompt: str, system: str, response_schema: dict) -> dict:
+        self.calls.append(system)
+        markers = (self.fail_when,) if isinstance(self.fail_when, str) else self.fail_when
+        if any(marker in system for marker in markers):
+            raise LLMError(
+                "LLM response did not match the required schema: "
+                "response is missing required field 'placeholder'."
+            )
+        return _canned_response(_expected_response_key(system), self.evidence_id)
+
+
+def test_evidence_collector_boundary_failure_halts_before_any_other_agent_runs() -> None:
+    llm = FailingAtLLM(fail_when="Evidence Collector")
+
+    events = list(stream_investigation("A quiet manor at midnight.", llm))
+
+    assert [event.kind for event in events] == [
+        InvestigationEventKind.EVIDENCE_COLLECTION_STARTED,
+        InvestigationEventKind.STEP_FAILED,
+    ]
+    failure_event = events[-1]
+    assert failure_event.agent_name == "Evidence Collector"
+    assert "schema" in failure_event.message.lower()
+    assert "Traceback" not in failure_event.message
+    assert failure_event.case_file.evidence == []
+    assert len(llm.calls) == 1
+
+
+def test_suspect_analyst_boundary_failure_halts_skeptic_and_lead_detective() -> None:
+    llm = FailingAtLLM(fail_when="Suspect Analyst")
+
+    events = list(stream_investigation("A quiet manor at midnight.", llm))
+
+    assert events[-1].kind is InvestigationEventKind.STEP_FAILED
+    assert events[-1].agent_name == "Suspect Analyst"
+    assert InvestigationEventKind.SKEPTIC_REVIEW_STARTED not in [event.kind for event in events]
+    assert InvestigationEventKind.LEAD_DETECTIVE_STARTED not in [event.kind for event in events]
+
+    final_case_file = events[-1].case_file
+    assert final_case_file.suspect_profiles == []
+    assert final_case_file.skeptic_reviews == []
+    assert final_case_file.verdict is None
+
+
+def test_both_concurrent_specialists_failing_still_halts_before_skeptic_and_lead_detective() -> None:
+    """A boundary failure in either concurrently-run specialist must still halt the pipeline.
+
+    Which of the two is reported is a race (whichever `Future` completes
+    first), but the halt itself, and that neither the Skeptic nor the Lead
+    Detective ever run, must hold regardless of which one that is.
+    """
+    llm = FailingAtLLM(fail_when=("Suspect Analyst", "Timeline Reconciler"))
+
+    events = list(stream_investigation("A quiet manor at midnight.", llm))
+
+    assert events[-1].kind is InvestigationEventKind.STEP_FAILED
+    assert events[-1].agent_name in {"Suspect Analyst", "Timeline Reconciler"}
+    assert InvestigationEventKind.SKEPTIC_REVIEW_STARTED not in [event.kind for event in events]
+    assert InvestigationEventKind.LEAD_DETECTIVE_STARTED not in [event.kind for event in events]
+
+    final_case_file = events[-1].case_file
+    assert final_case_file.skeptic_reviews == []
+    assert final_case_file.verdict is None
+
+
+def test_skeptic_boundary_failure_halts_before_the_lead_detective_runs() -> None:
+    llm = FailingAtLLM(fail_when="Skeptic")
+
+    events = list(stream_investigation("A quiet manor at midnight.", llm))
+
+    assert events[-1].kind is InvestigationEventKind.STEP_FAILED
+    assert events[-1].agent_name == "Skeptic"
+    assert InvestigationEventKind.LEAD_DETECTIVE_STARTED not in [event.kind for event in events]
+    assert events[-1].case_file.verdict is None
+
+
+def test_lead_detective_boundary_failure_leaves_case_file_without_a_verdict() -> None:
+    llm = FailingAtLLM(fail_when="Lead Detective")
+
+    events = list(stream_investigation("A quiet manor at midnight.", llm))
+
+    assert [event.kind for event in events[-2:]] == [
+        InvestigationEventKind.LEAD_DETECTIVE_STARTED,
+        InvestigationEventKind.STEP_FAILED,
+    ]
+    assert events[-1].agent_name == "Lead Detective"
+    assert events[-1].case_file.verdict is None
+
+
+def test_reinvestigation_boundary_failure_reports_the_failing_specialist() -> None:
+    case_file = _case_file_awaiting_reinvestigation()
+    llm = FailingAtLLM(fail_when="Timeline Reconciler", evidence_id="K-1")
+
+    events = list(stream_reinvestigation(case_file, "Evidence K-1 is unavailable.", llm))
+
+    assert events[-1].kind is InvestigationEventKind.STEP_FAILED
+    assert events[-1].agent_name == "Timeline Reconciler"
+    assert InvestigationEventKind.LEAD_DETECTIVE_STARTED not in [event.kind for event in events]

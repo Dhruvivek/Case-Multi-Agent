@@ -61,6 +61,8 @@ PROGRESS_LABELS = {
 
 
 def _progress_label(event: InvestigationEvent) -> str:
+    if event.kind is InvestigationEventKind.STEP_FAILED:
+        return f"❌ {event.agent_name} step failed: {event.message}"
     if event.kind is InvestigationEventKind.SPECIALIST_REVISION_STARTED:
         name = SPECIALIST_LABELS[event.specialist]
         return f"🔁 {name} is revising with reviewer feedback..."

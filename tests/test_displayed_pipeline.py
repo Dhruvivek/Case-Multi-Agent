@@ -24,6 +24,7 @@ from case_file import (
     Verdict,
     VerdictReviewStatus,
 )
+from llm_client import LLMError
 
 
 class DisplayLLM:
@@ -93,6 +94,27 @@ class DisplayLLM:
                 }
             ]
         }
+
+
+class FailingAtLLM:
+    """Behaves like `DisplayLLM`, except the named agent's call raises.
+
+    Models what `EnvLLMClient.call_llm` raises once its own reformat retry
+    has also failed, so `app.run_investigation` can be checked against a
+    genuine LLM boundary failure rather than a hand-built event.
+    """
+
+    def __init__(self, fail_when: str) -> None:
+        self._fail_when = fail_when
+        self._display_llm = DisplayLLM()
+
+    def call_llm(self, prompt: str, system: str, response_schema: dict) -> dict:
+        if self._fail_when in system:
+            raise LLMError(
+                "LLM response did not match the required schema: "
+                "response is missing required field 'evidence'."
+            )
+        return self._display_llm.call_llm(prompt, system, response_schema)
 
 
 class OrderedDisplayLLM(DisplayLLM):
@@ -431,3 +453,20 @@ def test_run_reinvestigation_continues_the_transcript_with_a_distinguishable_bou
     assert "proposal pending human review" in verdict
     assert new_case_file.human_notes == ["Evidence C-2 is unavailable."]
     assert new_case_file.verdict.review_status is VerdictReviewStatus.AWAITING_REVIEW
+
+
+def test_run_investigation_shows_a_visible_sanitized_step_failure_in_the_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app, "EnvLLMClient", lambda: FailingAtLLM("Evidence Collector"))
+
+    updates = list(app.run_investigation("A lens vanished from an observatory."))
+
+    transcript, evidence, suspects, timeline, skeptic, verdict, case_file = updates[-1]
+    assert "Evidence Collector" in transcript
+    assert "did not match the required schema" in transcript
+    assert "Traceback" not in transcript
+    assert case_file is not None
+    assert case_file.evidence == []
+    assert evidence == "_No evidence collected yet._"
+    assert verdict == "_No verdict yet._"
