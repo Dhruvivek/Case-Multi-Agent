@@ -41,6 +41,10 @@ PROGRESS_LABELS = {
     InvestigationEventKind.SKEPTIC_REVIEW_EXHAUSTED: (
         "❌ Skeptic review exhausted; unresolved findings remain."
     ),
+    InvestigationEventKind.LEAD_DETECTIVE_STARTED: (
+        "🧑‍💼 Lead Detective is drafting the verdict..."
+    ),
+    InvestigationEventKind.LEAD_DETECTIVE_COMPLETED: "✅ Lead Detective finished.",
 }
 
 
@@ -125,24 +129,49 @@ def render_skeptic_reviews(case_file: CaseFile) -> str:
     return "\n".join(lines)
 
 
-def run_investigation(mystery_text: str) -> Iterator[tuple[str, str, str, str, str]]:
+def render_verdict(case_file: CaseFile) -> str:
+    if case_file.verdict is None:
+        return "_No verdict yet._"
+    verdict = case_file.verdict
+    lines = [f"**Confidence: {verdict.confidence}/100**", "", "**Ranked conclusions**"]
+    for conclusion in verdict.conclusions:
+        citations = ", ".join(conclusion.evidence_ids)
+        lines.append(
+            f"{conclusion.rank}. **{conclusion.suspect}** — {conclusion.explanation} ({citations})"
+        )
+
+    lines.append("")
+    lines.append("**Limitations**")
+    if verdict.limitations:
+        lines.extend(f"- {limitation}" for limitation in verdict.limitations)
+    else:
+        lines.append("- None noted.")
+
+    lines.append("")
+    lines.append("_This verdict is a proposal pending human review._")
+    return "\n".join(lines)
+
+
+def run_investigation(mystery_text: str) -> Iterator[tuple[str, str, str, str, str, str]]:
     llm = EnvLLMClient()
     transcript_lines: list[str] = []
     for event in stream_investigation(mystery_text, llm):
         if event.kind is InvestigationEventKind.VALIDATION_ERROR:
-            yield event.message or "", "", "", "", ""
+            yield event.message or "", "", "", "", "", ""
             return
         transcript_lines.append(_progress_label(event))
         evidence_markdown = render_case_file(event.case_file) if event.case_file else ""
         suspects_markdown = render_suspect_profiles(event.case_file) if event.case_file else ""
         timeline_markdown = render_timeline(event.case_file) if event.case_file else ""
         skeptic_markdown = render_skeptic_reviews(event.case_file) if event.case_file else ""
+        verdict_markdown = render_verdict(event.case_file) if event.case_file else ""
         yield (
             "\n".join(transcript_lines),
             evidence_markdown,
             suspects_markdown,
             timeline_markdown,
             skeptic_markdown,
+            verdict_markdown,
         )
 
 
@@ -160,11 +189,19 @@ def build_interface() -> gr.Blocks:
         suspect_profiles = gr.Markdown(label="Suspect profiles")
         timeline = gr.Markdown(label="Timeline analysis")
         skeptic_panel = gr.Markdown(label="Skeptic review")
+        verdict_panel = gr.Markdown(label="Verdict")
 
         start_button.click(
             fn=run_investigation,
             inputs=mystery_input,
-            outputs=[transcript, evidence_table, suspect_profiles, timeline, skeptic_panel],
+            outputs=[
+                transcript,
+                evidence_table,
+                suspect_profiles,
+                timeline,
+                skeptic_panel,
+                verdict_panel,
+            ],
         )
     return interface
 

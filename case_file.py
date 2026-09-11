@@ -125,6 +125,32 @@ class SkepticReview(BaseModel):
     findings: tuple[SkepticFinding, ...] = ()
 
 
+class Conclusion(BaseModel):
+    """One ranked, evidence-cited explanation the Lead Detective proposes.
+
+    Ranks start at 1 and must be unique and consecutive across a verdict's
+    conclusions, with 1 the most strongly supported.
+    """
+
+    rank: int
+    suspect: str
+    explanation: str
+    evidence_ids: tuple[str, ...]
+
+
+class Verdict(BaseModel):
+    """The Lead Detective's ranked, evidence-cited proposal.
+
+    This is a proposal only: storing it on the case file does not mean a
+    human has reviewed or accepted it. `limitations` names any material
+    unresolved Skeptic finding or notable uncertainty instead of hiding it.
+    """
+
+    conclusions: tuple[Conclusion, ...]
+    confidence: int = Field(ge=0, le=100)
+    limitations: tuple[str, ...] = ()
+
+
 class CaseFile(BaseModel):
     """The shared, structured state for one investigation.
 
@@ -138,3 +164,4 @@ class CaseFile(BaseModel):
     timeline: Timeline = Field(default_factory=Timeline)
     skeptic_reviews: list[SkepticReview] = Field(default_factory=list)
     revised_specialists: set[Specialist] = Field(default_factory=set)
+    verdict: Verdict | None = None

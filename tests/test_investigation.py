@@ -13,11 +13,28 @@ from orchestrator import InvestigationEventKind, stream_investigation
 def _expected_response_key(system: str) -> str:
     if "Evidence Collector" in system:
         return "evidence"
+    if "Lead Detective" in system:
+        return "conclusions"
     if "Skeptic" in system:
         return "findings"
     if "Timeline Reconciler" in system:
         return "events"
     return "suspects"
+
+
+def _verdict_response(suspect: str = "The Housekeeper", evidence_id: str = "K-1") -> dict:
+    return {
+        "conclusions": [
+            {
+                "rank": 1,
+                "suspect": suspect,
+                "explanation": "The strongest evidence-backed explanation.",
+                "evidence_ids": [evidence_id],
+            }
+        ],
+        "confidence": 60,
+        "limitations": ["Some claims in the case file remain unresolved."],
+    }
 
 
 @dataclass
@@ -54,6 +71,8 @@ class ConcurrentSpecialistLLM:
                     }
                 ]
             }
+        if "Lead Detective" in system:
+            return _verdict_response(suspect="The Sculptor", evidence_id="W-3")
         if "Skeptic" in system:
             return {"findings": []}
 
@@ -160,6 +179,7 @@ def test_investigation_streams_collected_evidence_into_its_case_file() -> None:
                 ],
             },
             {"findings": []},
+            _verdict_response(suspect="The Night Guard", evidence_id="E-01"),
         ]
     )
 
@@ -182,6 +202,8 @@ def test_investigation_streams_collected_evidence_into_its_case_file() -> None:
     assert [event.kind for event in events[6:]] == [
         InvestigationEventKind.SKEPTIC_REVIEW_STARTED,
         InvestigationEventKind.SKEPTIC_REVIEW_APPROVED,
+        InvestigationEventKind.LEAD_DETECTIVE_STARTED,
+        InvestigationEventKind.LEAD_DETECTIVE_COMPLETED,
     ]
     evidence_completed_case_file = events[1].case_file
     assert (
@@ -205,6 +227,9 @@ def test_investigation_streams_collected_evidence_into_its_case_file() -> None:
     assert completed_case_file.timeline.events[0].time == "midnight"
     assert len(completed_case_file.skeptic_reviews) == 1
     assert completed_case_file.skeptic_reviews[0].outcome is SkepticReviewOutcome.APPROVED
+    assert completed_case_file.verdict is not None
+    assert completed_case_file.verdict.conclusions[0].suspect == "The Night Guard"
+    assert completed_case_file.verdict.conclusions[0].evidence_ids == ("E-01",)
 
 
 def test_empty_mystery_produces_validation_event_without_calling_the_llm() -> None:
@@ -270,6 +295,8 @@ def test_specialists_run_concurrently_and_stream_in_completion_order(
     assert [event.kind for event in events[6:]] == [
         InvestigationEventKind.SKEPTIC_REVIEW_STARTED,
         InvestigationEventKind.SKEPTIC_REVIEW_APPROVED,
+        InvestigationEventKind.LEAD_DETECTIVE_STARTED,
+        InvestigationEventKind.LEAD_DETECTIVE_COMPLETED,
     ]
     assert len(llm.specialist_prompts) == 2
     assert all("W-3" in prompt for prompt in llm.specialist_prompts)
@@ -345,6 +372,7 @@ def test_skeptic_revision_reruns_only_the_flagged_specialist() -> None:
             _findings_response(original_claim),
             _suspects_response(revised_claim),
             {"findings": []},
+            _verdict_response(),
         ]
     )
 
@@ -357,6 +385,8 @@ def test_skeptic_revision_reruns_only_the_flagged_specialist() -> None:
         InvestigationEventKind.SPECIALIST_REVISION_COMPLETED,
         InvestigationEventKind.SKEPTIC_REVIEW_STARTED,
         InvestigationEventKind.SKEPTIC_REVIEW_APPROVED,
+        InvestigationEventKind.LEAD_DETECTIVE_STARTED,
+        InvestigationEventKind.LEAD_DETECTIVE_COMPLETED,
     ]
     revision_started = events[8]
     assert revision_started.specialist is Specialist.SUSPECT_ANALYST
@@ -368,6 +398,7 @@ def test_skeptic_revision_reruns_only_the_flagged_specialist() -> None:
     assert len(final_case_file.skeptic_reviews) == 2
     assert final_case_file.skeptic_reviews[0].outcome is SkepticReviewOutcome.REVISION_REQUESTED
     assert final_case_file.skeptic_reviews[1].outcome is SkepticReviewOutcome.APPROVED
+    assert final_case_file.verdict is not None
 
 
 def test_skeptic_revision_reruns_multiple_flagged_specialists() -> None:
@@ -399,6 +430,7 @@ def test_skeptic_revision_reruns_multiple_flagged_specialists() -> None:
             _suspects_response(revised_suspect_claim),
             _events_response(revised_event),
             {"findings": []},
+            _verdict_response(),
         ]
     )
 
@@ -441,6 +473,20 @@ def test_skeptic_review_becomes_exhausted_after_one_revision_round() -> None:
             _findings_response(original_claim),
             _suspects_response(revised_claim),
             _findings_response(revised_claim),
+            {
+                "conclusions": [
+                    {
+                        "rank": 1,
+                        "suspect": "The Housekeeper",
+                        "explanation": "The strongest, though not fully certain, explanation.",
+                        "evidence_ids": ["K-1"],
+                    }
+                ],
+                "confidence": 40,
+                "limitations": [
+                    "Who physically held the key card at midnight remains unresolved."
+                ],
+            },
         ]
     )
 
@@ -453,6 +499,8 @@ def test_skeptic_review_becomes_exhausted_after_one_revision_round() -> None:
         InvestigationEventKind.SPECIALIST_REVISION_COMPLETED,
         InvestigationEventKind.SKEPTIC_REVIEW_STARTED,
         InvestigationEventKind.SKEPTIC_REVIEW_EXHAUSTED,
+        InvestigationEventKind.LEAD_DETECTIVE_STARTED,
+        InvestigationEventKind.LEAD_DETECTIVE_COMPLETED,
     ]
 
     final_case_file = events[-1].case_file
@@ -462,3 +510,5 @@ def test_skeptic_review_becomes_exhausted_after_one_revision_round() -> None:
     assert final_review.outcome is SkepticReviewOutcome.EXHAUSTED
     assert len(final_review.findings) == 1
     assert final_review.findings[0].claim == revised_claim
+    assert final_case_file.verdict is not None
+    assert final_case_file.verdict.limitations != ()
