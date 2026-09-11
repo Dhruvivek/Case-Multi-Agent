@@ -86,6 +86,45 @@ class Timeline(BaseModel):
         return not self.events and not self.issues
 
 
+class Specialist(str, Enum):
+    """A specialist agent a Skeptic finding or revision round targets."""
+
+    SUSPECT_ANALYST = "suspect_analyst"
+    TIMELINE_RECONCILER = "timeline_reconciler"
+
+
+class SkepticFindingKind(str, Enum):
+    """The kind of weakness a Skeptic finding identifies in a claim."""
+
+    MISSING_CITATION = "missing_citation"
+    NONEXISTENT_EVIDENCE_ID = "nonexistent_evidence_id"
+    UNSUPPORTED_REASONING = "unsupported_reasoning"
+
+
+class SkepticFinding(BaseModel):
+    """One Skeptic challenge naming the affected specialist and claim."""
+
+    specialist: Specialist
+    claim: str
+    kind: SkepticFindingKind
+    explanation: str
+
+
+class SkepticReviewOutcome(str, Enum):
+    """The result of one Skeptic review round."""
+
+    APPROVED = "approved"
+    REVISION_REQUESTED = "revision_requested"
+    EXHAUSTED = "exhausted"
+
+
+class SkepticReview(BaseModel):
+    """One inspectable Skeptic review round and any findings it raised."""
+
+    outcome: SkepticReviewOutcome
+    findings: tuple[SkepticFinding, ...] = ()
+
+
 class CaseFile(BaseModel):
     """The shared, structured state for one investigation.
 
@@ -97,3 +136,5 @@ class CaseFile(BaseModel):
     evidence: list[EvidenceItem] = Field(default_factory=list)
     suspect_profiles: list[SuspectProfile] = Field(default_factory=list)
     timeline: Timeline = Field(default_factory=Timeline)
+    skeptic_reviews: list[SkepticReview] = Field(default_factory=list)
+    revised_specialists: set[Specialist] = Field(default_factory=set)

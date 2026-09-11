@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from case_file import CaseFile
+from case_file import CaseFile, Specialist, SkepticReviewOutcome
 
 
 def format_evidence_prompt(case_file: CaseFile) -> str:
@@ -12,6 +12,32 @@ def format_evidence_prompt(case_file: CaseFile) -> str:
         for item in case_file.evidence
     )
     return f"Mystery:\n{case_file.mystery_text}\n\nEvidence:\n{evidence_lines}"
+
+
+def format_review_feedback(case_file: CaseFile, specialist: Specialist) -> str | None:
+    """Return prior-round review feedback for one specialist, if a revision was requested.
+
+    Returns `None` when there is no pending revision-requested review, or
+    when the latest review raised no finding against this specialist.
+    """
+    if not case_file.skeptic_reviews:
+        return None
+    latest_review = case_file.skeptic_reviews[-1]
+    if latest_review.outcome is not SkepticReviewOutcome.REVISION_REQUESTED:
+        return None
+    relevant_findings = [
+        finding for finding in latest_review.findings if finding.specialist is specialist
+    ]
+    if not relevant_findings:
+        return None
+    feedback_lines = "\n".join(
+        f"- {finding.claim!r}: {finding.explanation}" for finding in relevant_findings
+    )
+    return (
+        "A reviewer flagged these claims from your previous analysis. Revise "
+        "each one to address the concern, downgrading it to unknown if the "
+        "evidence truly does not support it:\n" + feedback_lines
+    )
 
 
 def validate_known_evidence_ids(

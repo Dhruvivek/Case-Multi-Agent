@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from agents._shared import (
     format_evidence_prompt,
+    format_review_feedback,
     require_evidence_ids,
     validate_known_evidence_ids,
 )
 from case_file import (
     CaseFile,
     ClaimStatus,
+    Specialist,
     Timeline,
     TimelineEvent,
     TimelineIssue,
@@ -25,7 +27,10 @@ SYSTEM_PROMPT = (
     "only when the evidence establishes its time or relative order. When an "
     "event cannot be ordered, set its status to 'unknown' and its time to "
     "null; never invent a timestamp or ordering. Card or credential use "
-    "establishes use of that credential, not the user's identity."
+    "establishes use of that credential, not the user's identity. If review "
+    "feedback about specific events or issues is included below, revise "
+    "those entries to address the concern, downgrading an entry to unknown "
+    "if the evidence truly does not support it."
 )
 
 _EVENT_SCHEMA = {
@@ -67,8 +72,12 @@ class TimelineReconciler:
         self._llm = llm
 
     def run(self, case_file: CaseFile) -> CaseFile:
+        prompt = format_evidence_prompt(case_file)
+        feedback = format_review_feedback(case_file, Specialist.TIMELINE_RECONCILER)
+        if feedback:
+            prompt = f"{prompt}\n\n{feedback}"
         response = self._llm.call_llm(
-            prompt=format_evidence_prompt(case_file),
+            prompt=prompt,
             system=SYSTEM_PROMPT,
             response_schema=RESPONSE_SCHEMA,
         )

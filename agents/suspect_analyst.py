@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from agents._shared import (
     format_evidence_prompt,
+    format_review_feedback,
     require_evidence_ids,
     validate_known_evidence_ids,
 )
-from case_file import CaseFile, Claim, ClaimStatus, SuspectProfile
+from case_file import CaseFile, Claim, ClaimStatus, Specialist, SuspectProfile
 from llm_client import LLMClient
 
 SYSTEM_PROMPT = (
@@ -23,7 +24,9 @@ SYSTEM_PROMPT = (
     "opportunity analysis. Every claim must cite the evidence IDs it is "
     "based on. If the evidence does not support a motive or opportunity "
     "claim, mark that claim as unknown instead of presenting a guess as "
-    "fact."
+    "fact. If review feedback about specific claims is included below, "
+    "revise those claims to address the concern, downgrading a claim to "
+    "unknown if the evidence truly does not support it."
 )
 
 _CLAIM_SCHEMA = {
@@ -63,8 +66,12 @@ class SuspectAnalyst:
         self._llm = llm
 
     def run(self, case_file: CaseFile) -> CaseFile:
+        prompt = format_evidence_prompt(case_file)
+        feedback = format_review_feedback(case_file, Specialist.SUSPECT_ANALYST)
+        if feedback:
+            prompt = f"{prompt}\n\n{feedback}"
         response = self._llm.call_llm(
-            prompt=format_evidence_prompt(case_file),
+            prompt=prompt,
             system=SYSTEM_PROMPT,
             response_schema=RESPONSE_SCHEMA,
         )

@@ -11,9 +11,14 @@ from collections.abc import Iterator
 
 import gradio as gr
 
-from case_file import CaseFile, Claim, ClaimStatus
+from case_file import CaseFile, Claim, ClaimStatus, Specialist
 from llm_client import EnvLLMClient
-from orchestrator import InvestigationEventKind, stream_investigation
+from orchestrator import InvestigationEvent, InvestigationEventKind, stream_investigation
+
+SPECIALIST_LABELS = {
+    Specialist.SUSPECT_ANALYST: "Suspect Analyst",
+    Specialist.TIMELINE_RECONCILER: "Timeline Reconciler",
+}
 
 PROGRESS_LABELS = {
     InvestigationEventKind.EVIDENCE_COLLECTION_STARTED: (
@@ -26,7 +31,27 @@ PROGRESS_LABELS = {
         "🕰️ Timeline Reconciler is ordering events..."
     ),
     InvestigationEventKind.TIMELINE_RECONCILIATION_COMPLETED: "✅ Timeline Reconciler finished.",
+    InvestigationEventKind.SKEPTIC_REVIEW_STARTED: (
+        "🧐 Skeptic is reviewing the specialists' claims..."
+    ),
+    InvestigationEventKind.SKEPTIC_REVIEW_APPROVED: "✅ Skeptic approved the specialist claims.",
+    InvestigationEventKind.SKEPTIC_REVIEW_REVISION_REQUESTED: (
+        "⚠️ Skeptic requested a revision."
+    ),
+    InvestigationEventKind.SKEPTIC_REVIEW_EXHAUSTED: (
+        "❌ Skeptic review exhausted; unresolved findings remain."
+    ),
 }
+
+
+def _progress_label(event: InvestigationEvent) -> str:
+    if event.kind is InvestigationEventKind.SPECIALIST_REVISION_STARTED:
+        name = SPECIALIST_LABELS[event.specialist]
+        return f"🔁 {name} is revising with reviewer feedback..."
+    if event.kind is InvestigationEventKind.SPECIALIST_REVISION_COMPLETED:
+        name = SPECIALIST_LABELS[event.specialist]
+        return f"✅ {name} revision finished."
+    return PROGRESS_LABELS[event.kind]
 
 
 def render_case_file(case_file: CaseFile) -> str:
@@ -81,22 +106,43 @@ def render_timeline(case_file: CaseFile) -> str:
     return "\n".join(lines)
 
 
-def run_investigation(mystery_text: str) -> Iterator[tuple[str, str, str, str]]:
+def render_skeptic_reviews(case_file: CaseFile) -> str:
+    if not case_file.skeptic_reviews:
+        return "_No Skeptic review yet._"
+    lines: list[str] = []
+    for round_number, review in enumerate(case_file.skeptic_reviews, start=1):
+        outcome_label = review.outcome.value.replace("_", " ").title()
+        lines.append(f"**Round {round_number}: {outcome_label}**")
+        if not review.findings:
+            lines.append("- No findings.")
+            continue
+        for finding in review.findings:
+            specialist_name = SPECIALIST_LABELS[finding.specialist]
+            kind_label = finding.kind.value.replace("_", " ")
+            lines.append(
+                f"- {specialist_name} — {kind_label}: {finding.claim!r} — {finding.explanation}"
+            )
+    return "\n".join(lines)
+
+
+def run_investigation(mystery_text: str) -> Iterator[tuple[str, str, str, str, str]]:
     llm = EnvLLMClient()
     transcript_lines: list[str] = []
     for event in stream_investigation(mystery_text, llm):
         if event.kind is InvestigationEventKind.VALIDATION_ERROR:
-            yield event.message or "", "", "", ""
+            yield event.message or "", "", "", "", ""
             return
-        transcript_lines.append(PROGRESS_LABELS[event.kind])
+        transcript_lines.append(_progress_label(event))
         evidence_markdown = render_case_file(event.case_file) if event.case_file else ""
         suspects_markdown = render_suspect_profiles(event.case_file) if event.case_file else ""
         timeline_markdown = render_timeline(event.case_file) if event.case_file else ""
+        skeptic_markdown = render_skeptic_reviews(event.case_file) if event.case_file else ""
         yield (
             "\n".join(transcript_lines),
             evidence_markdown,
             suspects_markdown,
             timeline_markdown,
+            skeptic_markdown,
         )
 
 
@@ -113,11 +159,12 @@ def build_interface() -> gr.Blocks:
         evidence_table = gr.Markdown(label="Collected evidence")
         suspect_profiles = gr.Markdown(label="Suspect profiles")
         timeline = gr.Markdown(label="Timeline analysis")
+        skeptic_panel = gr.Markdown(label="Skeptic review")
 
         start_button.click(
             fn=run_investigation,
             inputs=mystery_input,
-            outputs=[transcript, evidence_table, suspect_profiles, timeline],
+            outputs=[transcript, evidence_table, suspect_profiles, timeline, skeptic_panel],
         )
     return interface
 

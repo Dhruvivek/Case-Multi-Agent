@@ -8,12 +8,18 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 from agents.collector import EvidenceCollector
+from agents.skeptic import Skeptic
 from agents.suspect_analyst import SuspectAnalyst
 from agents.timeline_reconciler import TimelineReconciler
-from case_file import CaseFile
+from case_file import CaseFile, Specialist, SkepticReviewOutcome
 from llm_client import LLMClient
 
 EMPTY_MYSTERY_MESSAGE = "Enter a fictional mystery before starting an investigation."
+
+_SPECIALIST_AGENTS = {
+    Specialist.SUSPECT_ANALYST: SuspectAnalyst,
+    Specialist.TIMELINE_RECONCILER: TimelineReconciler,
+}
 
 
 class InvestigationEventKind(Enum):
@@ -24,6 +30,12 @@ class InvestigationEventKind(Enum):
     SUSPECT_ANALYSIS_COMPLETED = auto()
     TIMELINE_RECONCILIATION_STARTED = auto()
     TIMELINE_RECONCILIATION_COMPLETED = auto()
+    SKEPTIC_REVIEW_STARTED = auto()
+    SKEPTIC_REVIEW_APPROVED = auto()
+    SKEPTIC_REVIEW_REVISION_REQUESTED = auto()
+    SKEPTIC_REVIEW_EXHAUSTED = auto()
+    SPECIALIST_REVISION_STARTED = auto()
+    SPECIALIST_REVISION_COMPLETED = auto()
 
 
 @dataclass
@@ -31,6 +43,7 @@ class InvestigationEvent:
     kind: InvestigationEventKind
     case_file: CaseFile | None = None
     message: str | None = None
+    specialist: Specialist | None = None
 
 
 def stream_investigation(mystery_text: str, llm: LLMClient) -> Iterator[InvestigationEvent]:
@@ -85,3 +98,59 @@ def stream_investigation(mystery_text: str, llm: LLMClient) -> Iterator[Investig
             else:
                 case_file.timeline = specialist_case_file.timeline
             yield InvestigationEvent(kind=completed_kind, case_file=case_file)
+
+    yield from _run_skeptic_review(case_file, llm)
+
+
+def _run_skeptic_review(case_file: CaseFile, llm: LLMClient) -> Iterator[InvestigationEvent]:
+    """Review specialist claims and run at most one revision round.
+
+    A revision round reruns only the flagged specialist(s) once each with
+    the applicable feedback, then re-reviews. Findings still open after
+    that round surface as an explicit exhausted state instead of looping
+    again.
+    """
+    review = yield from _review_once(case_file, llm)
+    if review.outcome is SkepticReviewOutcome.APPROVED:
+        return
+
+    yield InvestigationEvent(
+        kind=InvestigationEventKind.SKEPTIC_REVIEW_REVISION_REQUESTED, case_file=case_file
+    )
+
+    flagged_specialists = sorted(
+        {finding.specialist for finding in review.findings},
+        key=lambda specialist: specialist.value,
+    )
+    for specialist in flagged_specialists:
+        yield InvestigationEvent(
+            kind=InvestigationEventKind.SPECIALIST_REVISION_STARTED,
+            case_file=case_file,
+            specialist=specialist,
+        )
+        _SPECIALIST_AGENTS[specialist](llm).run(case_file)
+        case_file.revised_specialists = case_file.revised_specialists | {specialist}
+        yield InvestigationEvent(
+            kind=InvestigationEventKind.SPECIALIST_REVISION_COMPLETED,
+            case_file=case_file,
+            specialist=specialist,
+        )
+
+    final_review = yield from _review_once(case_file, llm)
+    if final_review.outcome is SkepticReviewOutcome.APPROVED:
+        return
+
+    case_file.skeptic_reviews[-1] = final_review.model_copy(
+        update={"outcome": SkepticReviewOutcome.EXHAUSTED}
+    )
+    yield InvestigationEvent(kind=InvestigationEventKind.SKEPTIC_REVIEW_EXHAUSTED, case_file=case_file)
+
+
+def _review_once(case_file: CaseFile, llm: LLMClient) -> Iterator[InvestigationEvent]:
+    """Run one Skeptic review round, yielding its events, then return it."""
+    yield InvestigationEvent(kind=InvestigationEventKind.SKEPTIC_REVIEW_STARTED, case_file=case_file)
+    Skeptic(llm).run(case_file)
+    review = case_file.skeptic_reviews[-1]
+    if review.outcome is SkepticReviewOutcome.APPROVED:
+        yield InvestigationEvent(kind=InvestigationEventKind.SKEPTIC_REVIEW_APPROVED, case_file=case_file)
+    return review

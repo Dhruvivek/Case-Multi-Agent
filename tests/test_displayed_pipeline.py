@@ -35,6 +35,8 @@ class DisplayLLM:
                     }
                 ]
             }
+        if "Skeptic" in system:
+            return {"findings": []}
         if "Timeline Reconciler" in system:
             return {
                 "events": [
@@ -84,7 +86,7 @@ class OrderedDisplayLLM(DisplayLLM):
         self._first_finished = threading.Event()
 
     def call_llm(self, prompt: str, system: str, response_schema: dict) -> dict:
-        if "Evidence Collector" not in system:
+        if "Evidence Collector" not in system and "Skeptic" not in system:
             specialist = "timeline" if "Timeline Reconciler" in system else "suspect"
             self._rendezvous.wait(timeout=2)
             if specialist == self._first_specialist:
@@ -143,7 +145,7 @@ def test_complete_displayed_pipeline_includes_both_specialists_in_either_order(
 
     updates = list(app.run_investigation("A lens vanished from an observatory."))
 
-    _, _, first_suspects, first_timeline = updates[4]
+    _, _, first_suspects, first_timeline, _ = updates[4]
     if first_specialist == "timeline":
         assert first_suspects == "_No suspect profiles yet._"
         assert "The observatory door opened" in first_timeline
@@ -151,9 +153,11 @@ def test_complete_displayed_pipeline_includes_both_specialists_in_either_order(
         assert "The Astronomer" in first_suspects
         assert first_timeline == "_No timeline analysis yet._"
 
-    transcript, evidence, suspects, timeline = updates[-1]
+    transcript, evidence, suspects, timeline, skeptic = updates[-1]
     assert "Suspect Analyst finished" in transcript
     assert "Timeline Reconciler finished" in transcript
+    assert "Skeptic approved" in transcript
     assert "C-2" in evidence
     assert "The Astronomer" in suspects
     assert "shortly before dawn — The observatory door opened. (C-2)" in timeline
+    assert "Round 1: Approved" in skeptic
