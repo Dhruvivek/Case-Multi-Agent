@@ -1,0 +1,4 @@
+gradio
+pydantic
+pytest
+google-generativeai
