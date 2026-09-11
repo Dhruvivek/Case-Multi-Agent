@@ -1,10 +1,29 @@
-# AI Mystery Detective Team
+<p align="center">
+  <img src="assets/ai-mystery-detective-team-icon.png" width="180" alt="AI Mystery Detective Team icon — a fingerprint inside a magnifying glass" />
+</p>
 
-> A beginner-friendly multi-agent AI project that turns fictional mysteries
-> into evidence-based investigation proposals for human review.
+<h1 align="center">AI Mystery Detective Team</h1>
 
-**Status:** Planning and foundation complete — application implementation has
-not started yet.
+<p align="center">
+  A beginner-friendly multi-agent AI project that turns fictional mysteries
+  into evidence-based investigation proposals for human review.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/status-planning%20%26%20foundation-6366f1?style=for-the-badge" alt="Status: planning and foundation" />
+  <img src="https://img.shields.io/badge/orchestration-Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Planned orchestration: Python" />
+  <img src="https://img.shields.io/badge/interface-Gradio-F97316?style=for-the-badge" alt="Planned interface: Gradio" />
+</p>
+
+<p align="center">
+  <a href="#the-idea">The idea</a> ·
+  <a href="#planned-experience">Experience</a> ·
+  <a href="#design-principles">Principles</a> ·
+  <a href="#repository-guide">Docs</a>
+</p>
+
+> **Project status:** Planning and foundation complete — application
+> implementation has not started yet.
 
 Most AI assistants can give an answer; this project is about showing the work
 behind one. A team of focused detective agents will extract evidence, inspect
