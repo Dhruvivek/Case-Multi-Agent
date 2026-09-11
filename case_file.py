@@ -166,6 +166,10 @@ class Verdict(BaseModel):
     limitations: tuple[str, ...] = ()
     review_status: VerdictReviewStatus = VerdictReviewStatus.AWAITING_REVIEW
 
+    @property
+    def is_awaiting_review(self) -> bool:
+        return self.review_status is VerdictReviewStatus.AWAITING_REVIEW
+
 
 class CaseFile(BaseModel):
     """The shared, structured state for one investigation.

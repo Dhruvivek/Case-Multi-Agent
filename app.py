@@ -167,17 +167,23 @@ def render_verdict(case_file: CaseFile) -> str:
 
 
 def _verdict_awaiting_review(case_file: CaseFile | None) -> bool:
-    return bool(
-        case_file is not None
-        and case_file.verdict is not None
-        and case_file.verdict.review_status is VerdictReviewStatus.AWAITING_REVIEW
-    )
+    return bool(case_file is not None and case_file.verdict is not None and case_file.verdict.is_awaiting_review)
 
 
 def sync_review_controls(case_file: CaseFile | None) -> tuple[dict, dict]:
     """Enable Accept/Reject only while the current verdict awaits review."""
     interactive = _verdict_awaiting_review(case_file)
     return gr.update(interactive=interactive), gr.update(interactive=interactive)
+
+
+def disable_review_controls() -> tuple[dict, dict]:
+    """Disable Accept/Reject immediately when a new investigation starts.
+
+    Without this, buttons left enabled by a prior verdict would stay
+    clickable for the whole duration of a new run, before any new verdict
+    exists to review.
+    """
+    return sync_review_controls(None)
 
 
 def _handle_review_decision(
@@ -258,6 +264,9 @@ def build_interface() -> gr.Blocks:
         case_file_state = gr.State(None)
 
         start_button.click(
+            fn=disable_review_controls,
+            outputs=[accept_button, reject_button],
+        ).then(
             fn=run_investigation,
             inputs=mystery_input,
             outputs=[

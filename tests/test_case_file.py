@@ -107,3 +107,13 @@ def test_accept_after_reject_raises_and_does_not_flip_the_decision() -> None:
         case_file.accept_verdict()
 
     assert case_file.verdict.review_status is VerdictReviewStatus.REJECTED
+
+
+def test_repeated_reject_after_reject_raises_and_keeps_original_decision() -> None:
+    case_file = _case_file_with_verdict()
+    case_file.reject_verdict()
+
+    with pytest.raises(VerdictReviewError):
+        case_file.reject_verdict()
+
+    assert case_file.verdict.review_status is VerdictReviewStatus.REJECTED

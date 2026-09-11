@@ -268,6 +268,13 @@ def test_handle_reject_verdict_records_decision_and_disables_controls() -> None:
     assert reject_update["interactive"] is False
 
 
+def test_disable_review_controls_always_disables_both_buttons() -> None:
+    accept_update, reject_update = app.disable_review_controls()
+
+    assert accept_update["interactive"] is False
+    assert reject_update["interactive"] is False
+
+
 def test_handle_accept_verdict_with_no_case_file_is_a_predictable_no_op() -> None:
     verdict_markdown, updated_case_file, accept_update, reject_update = (
         app.handle_accept_verdict(None)
