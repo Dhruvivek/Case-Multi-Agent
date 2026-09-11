@@ -138,17 +138,33 @@ class Conclusion(BaseModel):
     evidence_ids: tuple[str, ...]
 
 
+class VerdictReviewStatus(str, Enum):
+    """Whether a proposed verdict still awaits a human decision."""
+
+    AWAITING_REVIEW = "awaiting_review"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+class VerdictReviewError(ValueError):
+    """Raised when a human review decision cannot be applied to the verdict."""
+
+
 class Verdict(BaseModel):
     """The Lead Detective's ranked, evidence-cited proposal.
 
     This is a proposal only: storing it on the case file does not mean a
     human has reviewed or accepted it. `limitations` names any material
     unresolved Skeptic finding or notable uncertainty instead of hiding it.
+    `review_status` starts `AWAITING_REVIEW` and is only ever changed by
+    `CaseFile.accept_verdict`/`reject_verdict`, which never touch the
+    conclusions, confidence, or limitations recorded here.
     """
 
     conclusions: tuple[Conclusion, ...]
     confidence: int = Field(ge=0, le=100)
     limitations: tuple[str, ...] = ()
+    review_status: VerdictReviewStatus = VerdictReviewStatus.AWAITING_REVIEW
 
 
 class CaseFile(BaseModel):
@@ -165,3 +181,22 @@ class CaseFile(BaseModel):
     skeptic_reviews: list[SkepticReview] = Field(default_factory=list)
     revised_specialists: set[Specialist] = Field(default_factory=set)
     verdict: Verdict | None = None
+
+    def accept_verdict(self) -> None:
+        """Record a human Accept decision for the current verdict."""
+        self._decide_verdict(VerdictReviewStatus.ACCEPTED)
+
+    def reject_verdict(self) -> None:
+        """Record a human Reject decision for the current verdict."""
+        self._decide_verdict(VerdictReviewStatus.REJECTED)
+
+    def _decide_verdict(self, decision: VerdictReviewStatus) -> None:
+        if self.verdict is None:
+            raise VerdictReviewError("There is no verdict to review yet.")
+        current_status = self.verdict.review_status
+        if current_status is not VerdictReviewStatus.AWAITING_REVIEW:
+            raise VerdictReviewError(
+                "This verdict already has a recorded human decision "
+                f"({current_status.value}); it cannot be changed."
+            )
+        self.verdict = self.verdict.model_copy(update={"review_status": decision})

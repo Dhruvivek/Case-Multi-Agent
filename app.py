@@ -7,11 +7,18 @@ reasoning; all of that lives behind `orchestrator.stream_investigation`.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import gradio as gr
 
-from case_file import CaseFile, Claim, ClaimStatus, Specialist
+from case_file import (
+    CaseFile,
+    Claim,
+    ClaimStatus,
+    Specialist,
+    VerdictReviewError,
+    VerdictReviewStatus,
+)
 from llm_client import EnvLLMClient
 from orchestrator import InvestigationEvent, InvestigationEventKind, stream_investigation
 
@@ -129,6 +136,13 @@ def render_skeptic_reviews(case_file: CaseFile) -> str:
     return "\n".join(lines)
 
 
+REVIEW_STATUS_MESSAGES = {
+    VerdictReviewStatus.AWAITING_REVIEW: "_This verdict is a proposal pending human review._",
+    VerdictReviewStatus.ACCEPTED: "_Human decision: Accepted._",
+    VerdictReviewStatus.REJECTED: "_Human decision: Rejected._",
+}
+
+
 def render_verdict(case_file: CaseFile) -> str:
     if case_file.verdict is None:
         return "_No verdict yet._"
@@ -148,16 +162,63 @@ def render_verdict(case_file: CaseFile) -> str:
         lines.append("- None noted.")
 
     lines.append("")
-    lines.append("_This verdict is a proposal pending human review._")
+    lines.append(REVIEW_STATUS_MESSAGES[verdict.review_status])
     return "\n".join(lines)
 
 
-def run_investigation(mystery_text: str) -> Iterator[tuple[str, str, str, str, str, str]]:
+def _verdict_awaiting_review(case_file: CaseFile | None) -> bool:
+    return bool(
+        case_file is not None
+        and case_file.verdict is not None
+        and case_file.verdict.review_status is VerdictReviewStatus.AWAITING_REVIEW
+    )
+
+
+def sync_review_controls(case_file: CaseFile | None) -> tuple[dict, dict]:
+    """Enable Accept/Reject only while the current verdict awaits review."""
+    interactive = _verdict_awaiting_review(case_file)
+    return gr.update(interactive=interactive), gr.update(interactive=interactive)
+
+
+def _handle_review_decision(
+    case_file: CaseFile | None, decide: Callable[[CaseFile], None]
+) -> tuple[str, CaseFile | None, dict, dict]:
+    """Apply a human decision, ignoring one that no longer applies.
+
+    A decision on a missing verdict, or a repeat decision on a verdict that
+    already has one, raises `VerdictReviewError`; that is a predictable
+    no-op here rather than a crash or a silently overwritten decision.
+    """
+    if case_file is not None:
+        try:
+            decide(case_file)
+        except VerdictReviewError:
+            pass
+    verdict_markdown = render_verdict(case_file) if case_file else "_No verdict yet._"
+    accept_update, reject_update = sync_review_controls(case_file)
+    return verdict_markdown, case_file, accept_update, reject_update
+
+
+def handle_accept_verdict(
+    case_file: CaseFile | None,
+) -> tuple[str, CaseFile | None, dict, dict]:
+    return _handle_review_decision(case_file, CaseFile.accept_verdict)
+
+
+def handle_reject_verdict(
+    case_file: CaseFile | None,
+) -> tuple[str, CaseFile | None, dict, dict]:
+    return _handle_review_decision(case_file, CaseFile.reject_verdict)
+
+
+def run_investigation(
+    mystery_text: str,
+) -> Iterator[tuple[str, str, str, str, str, str, CaseFile | None]]:
     llm = EnvLLMClient()
     transcript_lines: list[str] = []
     for event in stream_investigation(mystery_text, llm):
         if event.kind is InvestigationEventKind.VALIDATION_ERROR:
-            yield event.message or "", "", "", "", "", ""
+            yield event.message or "", "", "", "", "", "", None
             return
         transcript_lines.append(_progress_label(event))
         evidence_markdown = render_case_file(event.case_file) if event.case_file else ""
@@ -172,6 +233,7 @@ def run_investigation(mystery_text: str) -> Iterator[tuple[str, str, str, str, s
             timeline_markdown,
             skeptic_markdown,
             verdict_markdown,
+            event.case_file,
         )
 
 
@@ -190,6 +252,10 @@ def build_interface() -> gr.Blocks:
         timeline = gr.Markdown(label="Timeline analysis")
         skeptic_panel = gr.Markdown(label="Skeptic review")
         verdict_panel = gr.Markdown(label="Verdict")
+        with gr.Row():
+            accept_button = gr.Button("Accept", interactive=False)
+            reject_button = gr.Button("Reject", interactive=False)
+        case_file_state = gr.State(None)
 
         start_button.click(
             fn=run_investigation,
@@ -201,7 +267,23 @@ def build_interface() -> gr.Blocks:
                 timeline,
                 skeptic_panel,
                 verdict_panel,
+                case_file_state,
             ],
+        ).then(
+            fn=sync_review_controls,
+            inputs=case_file_state,
+            outputs=[accept_button, reject_button],
+        )
+
+        accept_button.click(
+            fn=handle_accept_verdict,
+            inputs=case_file_state,
+            outputs=[verdict_panel, case_file_state, accept_button, reject_button],
+        )
+        reject_button.click(
+            fn=handle_reject_verdict,
+            inputs=case_file_state,
+            outputs=[verdict_panel, case_file_state, accept_button, reject_button],
         )
     return interface
 

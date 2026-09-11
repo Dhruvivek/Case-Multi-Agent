@@ -22,6 +22,7 @@ from case_file import (
     TimelineIssue,
     TimelineIssueKind,
     Verdict,
+    VerdictReviewStatus,
 )
 
 
@@ -176,6 +177,122 @@ def test_render_verdict_displays_ranking_citations_confidence_and_limitations() 
     assert "proposal pending human review" in markdown
 
 
+def _verdict_case_file() -> CaseFile:
+    case_file = CaseFile(mystery_text="A lens vanished from an observatory.")
+    case_file.verdict = Verdict(
+        conclusions=(
+            Conclusion(
+                rank=1,
+                suspect="The Astronomer",
+                explanation="Present at the observatory when the lens went missing.",
+                evidence_ids=("C-2",),
+            ),
+        ),
+        confidence=55,
+    )
+    return case_file
+
+
+def test_render_verdict_shows_accepted_decision() -> None:
+    case_file = _verdict_case_file()
+    case_file.accept_verdict()
+
+    assert "Human decision: Accepted." in app.render_verdict(case_file)
+
+
+def test_render_verdict_shows_rejected_decision() -> None:
+    case_file = _verdict_case_file()
+    case_file.reject_verdict()
+
+    assert "Human decision: Rejected." in app.render_verdict(case_file)
+
+
+def test_sync_review_controls_disabled_before_a_verdict_exists() -> None:
+    case_file = CaseFile(mystery_text="A lens vanished from an observatory.")
+
+    accept_update, reject_update = app.sync_review_controls(case_file)
+
+    assert accept_update["interactive"] is False
+    assert reject_update["interactive"] is False
+
+
+def test_sync_review_controls_disabled_when_case_file_is_none() -> None:
+    accept_update, reject_update = app.sync_review_controls(None)
+
+    assert accept_update["interactive"] is False
+    assert reject_update["interactive"] is False
+
+
+def test_sync_review_controls_enabled_while_verdict_awaits_review() -> None:
+    case_file = _verdict_case_file()
+
+    accept_update, reject_update = app.sync_review_controls(case_file)
+
+    assert accept_update["interactive"] is True
+    assert reject_update["interactive"] is True
+
+
+def test_sync_review_controls_disabled_once_verdict_is_decided() -> None:
+    case_file = _verdict_case_file()
+    case_file.accept_verdict()
+
+    accept_update, reject_update = app.sync_review_controls(case_file)
+
+    assert accept_update["interactive"] is False
+    assert reject_update["interactive"] is False
+
+
+def test_handle_accept_verdict_records_decision_and_disables_controls() -> None:
+    case_file = _verdict_case_file()
+
+    verdict_markdown, updated_case_file, accept_update, reject_update = (
+        app.handle_accept_verdict(case_file)
+    )
+
+    assert updated_case_file.verdict.review_status is VerdictReviewStatus.ACCEPTED
+    assert "Human decision: Accepted." in verdict_markdown
+    assert accept_update["interactive"] is False
+    assert reject_update["interactive"] is False
+
+
+def test_handle_reject_verdict_records_decision_and_disables_controls() -> None:
+    case_file = _verdict_case_file()
+
+    verdict_markdown, updated_case_file, accept_update, reject_update = (
+        app.handle_reject_verdict(case_file)
+    )
+
+    assert updated_case_file.verdict.review_status is VerdictReviewStatus.REJECTED
+    assert "Human decision: Rejected." in verdict_markdown
+    assert accept_update["interactive"] is False
+    assert reject_update["interactive"] is False
+
+
+def test_handle_accept_verdict_with_no_case_file_is_a_predictable_no_op() -> None:
+    verdict_markdown, updated_case_file, accept_update, reject_update = (
+        app.handle_accept_verdict(None)
+    )
+
+    assert verdict_markdown == "_No verdict yet._"
+    assert updated_case_file is None
+    assert accept_update["interactive"] is False
+    assert reject_update["interactive"] is False
+
+
+def test_repeated_accept_after_reject_does_not_flip_the_recorded_decision() -> None:
+    case_file = _verdict_case_file()
+    app.handle_reject_verdict(case_file)
+
+    verdict_markdown, updated_case_file, accept_update, reject_update = (
+        app.handle_accept_verdict(case_file)
+    )
+
+    assert updated_case_file.verdict.review_status is VerdictReviewStatus.REJECTED
+    assert "Human decision: Rejected." in verdict_markdown
+    assert accept_update["interactive"] is False
+    assert reject_update["interactive"] is False
+
+
 @pytest.mark.parametrize("first_specialist", ["timeline", "suspect"])
 def test_complete_displayed_pipeline_includes_both_specialists_in_either_order(
     monkeypatch: pytest.MonkeyPatch,
@@ -189,7 +306,7 @@ def test_complete_displayed_pipeline_includes_both_specialists_in_either_order(
 
     updates = list(app.run_investigation("A lens vanished from an observatory."))
 
-    _, _, first_suspects, first_timeline, _, _ = updates[4]
+    _, _, first_suspects, first_timeline, _, _, _ = updates[4]
     if first_specialist == "timeline":
         assert first_suspects == "_No suspect profiles yet._"
         assert "The observatory door opened" in first_timeline
@@ -197,7 +314,7 @@ def test_complete_displayed_pipeline_includes_both_specialists_in_either_order(
         assert "The Astronomer" in first_suspects
         assert first_timeline == "_No timeline analysis yet._"
 
-    transcript, evidence, suspects, timeline, skeptic, verdict = updates[-1]
+    transcript, evidence, suspects, timeline, skeptic, verdict, case_file = updates[-1]
     assert "Suspect Analyst finished" in transcript
     assert "Timeline Reconciler finished" in transcript
     assert "Skeptic approved" in transcript
@@ -210,3 +327,5 @@ def test_complete_displayed_pipeline_includes_both_specialists_in_either_order(
     assert "1. **The Astronomer**" in verdict
     assert "Who opened the door is not established." in verdict
     assert "proposal pending human review" in verdict
+    assert case_file is not None
+    assert case_file.verdict.review_status is VerdictReviewStatus.AWAITING_REVIEW

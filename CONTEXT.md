@@ -28,3 +28,8 @@ _Avoid_: retry loop
 The Lead Detective's ranked, evidence-cited proposal with a confidence score;
 it is not a decision until a human reviews it.
 _Avoid_: final answer, resolution
+
+**Human decision**:
+The Accept or Reject outcome a person records for a verdict that is
+awaiting human review. A verdict without one remains a proposal.
+_Avoid_: approval, final answer
