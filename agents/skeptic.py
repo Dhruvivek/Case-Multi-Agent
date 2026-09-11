@@ -10,18 +10,14 @@ does not actually establish the stated conclusion.
 
 from __future__ import annotations
 
-from agents._shared import format_evidence_prompt
+from agents._shared import format_evidence_prompt, format_specialist_claims_prompt
 from case_file import (
     CaseFile,
-    Claim,
-    ClaimStatus,
     SkepticFinding,
     SkepticFindingKind,
     SkepticReview,
     SkepticReviewOutcome,
     Specialist,
-    TimelineEvent,
-    TimelineIssue,
 )
 from llm_client import LLMClient
 
@@ -93,36 +89,9 @@ class Skeptic:
 
 
 def _build_prompt(case_file: CaseFile) -> str:
-    lines = [format_evidence_prompt(case_file), "", "Suspect Analyst claims:"]
-    for profile in case_file.suspect_profiles:
-        lines.append(f"Suspect: {profile.suspect}")
-        lines.extend(_claim_line("Motive", claim) for claim in profile.motive)
-        lines.extend(_claim_line("Opportunity", claim) for claim in profile.opportunity)
-
-    lines.append("")
-    lines.append("Timeline Reconciler claims:")
-    lines.extend(_event_line(event) for event in case_file.timeline.events)
-    lines.extend(_issue_line(issue) for issue in case_file.timeline.issues)
-    return "\n".join(lines)
-
-
-def _claim_line(section: str, claim: Claim) -> str:
-    if claim.status is ClaimStatus.UNKNOWN:
-        return f"- {section} (unknown): {claim.statement}"
-    citations = ", ".join(claim.evidence_ids)
-    return f"- {section}: {claim.statement} ({citations})"
-
-
-def _event_line(event: TimelineEvent) -> str:
-    if event.status is ClaimStatus.UNKNOWN:
-        return f"- Event (unknown): {event.statement}"
-    citations = ", ".join(event.evidence_ids)
-    return f"- Event: {event.statement} ({citations})"
-
-
-def _issue_line(issue: TimelineIssue) -> str:
-    citations = ", ".join(issue.evidence_ids)
-    return f"- Issue ({issue.kind.value}): {issue.statement} ({citations})"
+    return "\n".join(
+        [format_evidence_prompt(case_file), "", format_specialist_claims_prompt(case_file)]
+    )
 
 
 def _known_claims_by_specialist(case_file: CaseFile) -> dict[Specialist, set[str]]:

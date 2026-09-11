@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 from agents.collector import EvidenceCollector
+from agents.lead_detective import LeadDetective
 from agents.skeptic import Skeptic
 from agents.suspect_analyst import SuspectAnalyst
 from agents.timeline_reconciler import TimelineReconciler
@@ -36,6 +37,8 @@ class InvestigationEventKind(Enum):
     SKEPTIC_REVIEW_EXHAUSTED = auto()
     SPECIALIST_REVISION_STARTED = auto()
     SPECIALIST_REVISION_COMPLETED = auto()
+    LEAD_DETECTIVE_STARTED = auto()
+    LEAD_DETECTIVE_COMPLETED = auto()
 
 
 @dataclass
@@ -100,6 +103,14 @@ def stream_investigation(mystery_text: str, llm: LLMClient) -> Iterator[Investig
             yield InvestigationEvent(kind=completed_kind, case_file=case_file)
 
     yield from _run_skeptic_review(case_file, llm)
+
+    yield InvestigationEvent(
+        kind=InvestigationEventKind.LEAD_DETECTIVE_STARTED, case_file=case_file
+    )
+    LeadDetective(llm).run(case_file)
+    yield InvestigationEvent(
+        kind=InvestigationEventKind.LEAD_DETECTIVE_COMPLETED, case_file=case_file
+    )
 
 
 def _run_skeptic_review(case_file: CaseFile, llm: LLMClient) -> Iterator[InvestigationEvent]:

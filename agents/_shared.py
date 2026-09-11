@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from case_file import CaseFile, Specialist, SkepticReviewOutcome
+from case_file import (
+    CaseFile,
+    Claim,
+    ClaimStatus,
+    Specialist,
+    SkepticReviewOutcome,
+    TimelineEvent,
+    TimelineIssue,
+)
 
 
 def format_evidence_prompt(case_file: CaseFile) -> str:
@@ -57,3 +65,37 @@ def require_evidence_ids(evidence_ids: tuple[str, ...], subject: str) -> None:
     """Reject a claim type whose contract requires at least one citation."""
     if not evidence_ids:
         raise ValueError(f"{subject} must cite at least one evidence ID.")
+
+
+def format_claim_line(section: str, claim: Claim) -> str:
+    if claim.status is ClaimStatus.UNKNOWN:
+        return f"- {section} (unknown): {claim.statement}"
+    citations = ", ".join(claim.evidence_ids)
+    return f"- {section}: {claim.statement} ({citations})"
+
+
+def format_event_line(event: TimelineEvent) -> str:
+    if event.status is ClaimStatus.UNKNOWN:
+        return f"- Event (unknown): {event.statement}"
+    citations = ", ".join(event.evidence_ids)
+    return f"- Event: {event.statement} ({citations})"
+
+
+def format_issue_line(issue: TimelineIssue) -> str:
+    citations = ", ".join(issue.evidence_ids)
+    return f"- Issue ({issue.kind.value}): {issue.statement} ({citations})"
+
+
+def format_specialist_claims_prompt(case_file: CaseFile) -> str:
+    """Render the Suspect Analyst's and Timeline Reconciler's claims for review."""
+    lines = ["Suspect Analyst claims:"]
+    for profile in case_file.suspect_profiles:
+        lines.append(f"Suspect: {profile.suspect}")
+        lines.extend(format_claim_line("Motive", claim) for claim in profile.motive)
+        lines.extend(format_claim_line("Opportunity", claim) for claim in profile.opportunity)
+
+    lines.append("")
+    lines.append("Timeline Reconciler claims:")
+    lines.extend(format_event_line(event) for event in case_file.timeline.events)
+    lines.extend(format_issue_line(issue) for issue in case_file.timeline.issues)
+    return "\n".join(lines)
