@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 from agents.collector import EvidenceCollector
+from agents.suspect_analyst import SuspectAnalyst
 from case_file import CaseFile
 from llm_client import LLMClient
 
@@ -17,6 +18,8 @@ class InvestigationEventKind(Enum):
     VALIDATION_ERROR = auto()
     EVIDENCE_COLLECTION_STARTED = auto()
     EVIDENCE_COLLECTION_COMPLETED = auto()
+    SUSPECT_ANALYSIS_STARTED = auto()
+    SUSPECT_ANALYSIS_COMPLETED = auto()
 
 
 @dataclass
@@ -43,3 +46,9 @@ def stream_investigation(mystery_text: str, llm: LLMClient) -> Iterator[Investig
     EvidenceCollector(llm).run(case_file)
 
     yield InvestigationEvent(kind=InvestigationEventKind.EVIDENCE_COLLECTION_COMPLETED, case_file=case_file)
+
+    yield InvestigationEvent(kind=InvestigationEventKind.SUSPECT_ANALYSIS_STARTED, case_file=case_file)
+
+    SuspectAnalyst(llm).run(case_file)
+
+    yield InvestigationEvent(kind=InvestigationEventKind.SUSPECT_ANALYSIS_COMPLETED, case_file=case_file)

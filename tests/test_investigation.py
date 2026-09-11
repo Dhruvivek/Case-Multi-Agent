@@ -33,7 +33,28 @@ def test_investigation_streams_collected_evidence_into_its_case_file() -> None:
                         "classification": "inference",
                     },
                 ]
-            }
+            },
+            {
+                "suspects": [
+                    {
+                        "name": "The Night Guard",
+                        "motive": [
+                            {
+                                "statement": "No clear reason to steal is on record.",
+                                "status": "unknown",
+                                "evidence_ids": [],
+                            }
+                        ],
+                        "opportunity": [
+                            {
+                                "statement": "Was on duty when the window was found open.",
+                                "status": "supported",
+                                "evidence_ids": ["E-01"],
+                            }
+                        ],
+                    }
+                ]
+            },
         ]
     )
 
@@ -46,13 +67,25 @@ def test_investigation_streams_collected_evidence_into_its_case_file() -> None:
     assert [event.kind for event in events] == [
         InvestigationEventKind.EVIDENCE_COLLECTION_STARTED,
         InvestigationEventKind.EVIDENCE_COLLECTION_COMPLETED,
+        InvestigationEventKind.SUSPECT_ANALYSIS_STARTED,
+        InvestigationEventKind.SUSPECT_ANALYSIS_COMPLETED,
     ]
-    completed_case_file = events[-1].case_file
-    assert completed_case_file.mystery_text == "At midnight, the gallery window stood open."
-    assert [(item.id, item.classification.value) for item in completed_case_file.evidence] == [
+    evidence_completed_case_file = events[1].case_file
+    assert evidence_completed_case_file.mystery_text == "At midnight, the gallery window stood open."
+    assert [
+        (item.id, item.classification.value) for item in evidence_completed_case_file.evidence
+    ] == [
         ("E-01", "observed_fact"),
         ("E-02", "inference"),
     ]
+
+    completed_case_file = events[-1].case_file
+    assert [profile.suspect for profile in completed_case_file.suspect_profiles] == [
+        "The Night Guard"
+    ]
+    profile = completed_case_file.suspect_profiles[0]
+    assert profile.motive[0].status.value == "unknown"
+    assert profile.opportunity[0].evidence_ids == ("E-01",)
 
 
 def test_empty_mystery_produces_validation_event_without_calling_the_llm() -> None:
