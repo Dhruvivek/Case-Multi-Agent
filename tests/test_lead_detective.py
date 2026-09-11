@@ -120,6 +120,25 @@ def _valid_response(confidence: int = 70) -> dict:
     }
 
 
+def test_lead_detective_includes_human_guidance_in_the_prompt_when_present() -> None:
+    llm = StubLLM(response=_valid_response())
+    case_file = _case_file_with_approved_review()
+    case_file.human_notes = ["Evidence E-01 is unavailable; do not rely on it."]
+
+    LeadDetective(llm).run(case_file)
+
+    assert "Evidence E-01 is unavailable; do not rely on it." in llm.prompts[0]
+
+
+def test_lead_detective_prompt_omits_guidance_section_without_human_notes() -> None:
+    llm = StubLLM(response=_valid_response())
+    case_file = _case_file_with_approved_review()
+
+    LeadDetective(llm).run(case_file)
+
+    assert "human reviewer" not in llm.prompts[0].lower()
+
+
 def test_lead_detective_produces_a_ranked_evidence_cited_verdict() -> None:
     case_file = _case_file_with_approved_review()
     llm = StubLLM(response=_valid_response())

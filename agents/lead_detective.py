@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from agents._shared import (
     format_evidence_prompt,
+    format_human_guidance,
     format_specialist_claims_prompt,
     require_evidence_ids,
     validate_known_evidence_ids,
@@ -34,7 +35,10 @@ SYSTEM_PROMPT = (
     "support) to 100 (fully supported) that agrees with how certain your "
     "explanation actually is. List every material unresolved Skeptic "
     "finding and any other significant remaining uncertainty as a "
-    "limitation instead of omitting it."
+    "limitation instead of omitting it. If human re-investigation guidance "
+    "is included below, follow it: do not cite evidence it says is "
+    "unavailable in any conclusion, even if that evidence ID still exists "
+    "in the case file."
 )
 
 _CONCLUSION_SCHEMA = {
@@ -92,6 +96,9 @@ def _build_prompt(case_file: CaseFile) -> str:
         "Skeptic review history:",
         _format_skeptic_reviews(case_file),
     ]
+    guidance = format_human_guidance(case_file)
+    if guidance:
+        lines.extend(["", guidance])
     return "\n".join(lines)
 
 

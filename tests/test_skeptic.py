@@ -77,6 +77,25 @@ def _case_file_with_specialist_output() -> CaseFile:
     return case_file
 
 
+def test_skeptic_includes_human_guidance_in_the_prompt_when_present() -> None:
+    llm = StubLLM(response={"findings": []})
+    case_file = _case_file_with_specialist_output()
+    case_file.human_notes = ["Evidence E-01 is unavailable; do not rely on it."]
+
+    Skeptic(llm).run(case_file)
+
+    assert "Evidence E-01 is unavailable; do not rely on it." in llm.prompts[0]
+
+
+def test_skeptic_prompt_omits_guidance_section_without_human_notes() -> None:
+    llm = StubLLM(response={"findings": []})
+    case_file = _case_file_with_specialist_output()
+
+    Skeptic(llm).run(case_file)
+
+    assert "human reviewer" not in llm.prompts[0].lower()
+
+
 def test_skeptic_approves_when_no_findings() -> None:
     llm = StubLLM(response={"findings": []})
     case_file = _case_file_with_specialist_output()

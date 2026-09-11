@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agents._shared import (
     format_evidence_prompt,
+    format_human_guidance,
     format_review_feedback,
     require_evidence_ids,
     validate_known_evidence_ids,
@@ -30,7 +31,8 @@ SYSTEM_PROMPT = (
     "establishes use of that credential, not the user's identity. If review "
     "feedback about specific events or issues is included below, revise "
     "those entries to address the concern, downgrading an entry to unknown "
-    "if the evidence truly does not support it."
+    "if the evidence truly does not support it. If human re-investigation "
+    "guidance is included below, follow it for this pass."
 )
 
 _EVENT_SCHEMA = {
@@ -73,6 +75,9 @@ class TimelineReconciler:
 
     def run(self, case_file: CaseFile) -> CaseFile:
         prompt = format_evidence_prompt(case_file)
+        guidance = format_human_guidance(case_file)
+        if guidance:
+            prompt = f"{prompt}\n\n{guidance}"
         feedback = format_review_feedback(case_file, Specialist.TIMELINE_RECONCILER)
         if feedback:
             prompt = f"{prompt}\n\n{feedback}"

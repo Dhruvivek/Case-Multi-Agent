@@ -144,6 +144,7 @@ class VerdictReviewStatus(str, Enum):
     AWAITING_REVIEW = "awaiting_review"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
+    REINVESTIGATION_REQUESTED = "reinvestigation_requested"
 
 
 class VerdictReviewError(ValueError):
@@ -157,8 +158,9 @@ class Verdict(BaseModel):
     human has reviewed or accepted it. `limitations` names any material
     unresolved Skeptic finding or notable uncertainty instead of hiding it.
     `review_status` starts `AWAITING_REVIEW` and is only ever changed by
-    `CaseFile.accept_verdict`/`reject_verdict`, which never touch the
-    conclusions, confidence, or limitations recorded here.
+    `CaseFile.accept_verdict`/`reject_verdict`/`request_reinvestigation`,
+    which never touch the conclusions, confidence, or limitations recorded
+    here.
     """
 
     conclusions: tuple[Conclusion, ...]
@@ -184,6 +186,7 @@ class CaseFile(BaseModel):
     timeline: Timeline = Field(default_factory=Timeline)
     skeptic_reviews: list[SkepticReview] = Field(default_factory=list)
     revised_specialists: set[Specialist] = Field(default_factory=set)
+    human_notes: list[str] = Field(default_factory=list)
     verdict: Verdict | None = None
 
     def accept_verdict(self) -> None:
@@ -193,6 +196,28 @@ class CaseFile(BaseModel):
     def reject_verdict(self) -> None:
         """Record a human Reject decision for the current verdict."""
         self._decide_verdict(VerdictReviewStatus.REJECTED)
+
+    def request_reinvestigation(self, note: str) -> None:
+        """Record a human re-investigation request and reset for a fresh pass.
+
+        Preserves `mystery_text` and `evidence` so the Evidence Collector
+        does not rerun. Appends `note` to `human_notes`, marks the current
+        verdict's review status `REINVESTIGATION_REQUESTED` instead of
+        clearing it, so the prior verdict and this request stay
+        distinguishable, and resets `suspect_profiles`, `timeline`,
+        `skeptic_reviews`, and `revised_specialists` so suspect analysis and
+        timeline reconciliation can rerun clean, followed by a fresh Skeptic
+        review and a new verdict.
+        """
+        stripped_note = note.strip()
+        if not stripped_note:
+            raise ValueError("A guidance note is required to request re-investigation.")
+        self._decide_verdict(VerdictReviewStatus.REINVESTIGATION_REQUESTED)
+        self.human_notes = [*self.human_notes, stripped_note]
+        self.suspect_profiles = []
+        self.timeline = Timeline()
+        self.skeptic_reviews = []
+        self.revised_specialists = set()
 
     def _decide_verdict(self, decision: VerdictReviewStatus) -> None:
         if self.verdict is None:

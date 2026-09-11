@@ -10,7 +10,11 @@ does not actually establish the stated conclusion.
 
 from __future__ import annotations
 
-from agents._shared import format_evidence_prompt, format_specialist_claims_prompt
+from agents._shared import (
+    format_evidence_prompt,
+    format_human_guidance,
+    format_specialist_claims_prompt,
+)
 from case_file import (
     CaseFile,
     SkepticFinding,
@@ -36,7 +40,9 @@ SYSTEM_PROMPT = (
     "cites an evidence ID absent from the case file. Do not flag a claim "
     "already marked unknown, and do not flag a claim the cited evidence "
     "reasonably supports. Quote each flagged claim's statement exactly as "
-    "given so it can be matched back to its source."
+    "given so it can be matched back to its source. If human "
+    "re-investigation guidance is included below, flag any claim that "
+    "still relies on evidence the guidance says is unavailable."
 )
 
 _FINDING_SCHEMA = {
@@ -89,9 +95,11 @@ class Skeptic:
 
 
 def _build_prompt(case_file: CaseFile) -> str:
-    return "\n".join(
-        [format_evidence_prompt(case_file), "", format_specialist_claims_prompt(case_file)]
-    )
+    lines = [format_evidence_prompt(case_file), "", format_specialist_claims_prompt(case_file)]
+    guidance = format_human_guidance(case_file)
+    if guidance:
+        lines.extend(["", guidance])
+    return "\n".join(lines)
 
 
 def _known_claims_by_specialist(case_file: CaseFile) -> dict[Specialist, set[str]]:

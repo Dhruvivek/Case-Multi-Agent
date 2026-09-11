@@ -210,42 +210,57 @@ def test_render_verdict_shows_rejected_decision() -> None:
 def test_sync_review_controls_disabled_before_a_verdict_exists() -> None:
     case_file = CaseFile(mystery_text="A lens vanished from an observatory.")
 
-    accept_update, reject_update = app.sync_review_controls(case_file)
+    accept_update, reject_update, reinvestigate_update = app.sync_review_controls(case_file)
 
     assert accept_update["interactive"] is False
     assert reject_update["interactive"] is False
+    assert reinvestigate_update["interactive"] is False
 
 
 def test_sync_review_controls_disabled_when_case_file_is_none() -> None:
-    accept_update, reject_update = app.sync_review_controls(None)
+    accept_update, reject_update, reinvestigate_update = app.sync_review_controls(None)
 
     assert accept_update["interactive"] is False
     assert reject_update["interactive"] is False
+    assert reinvestigate_update["interactive"] is False
 
 
 def test_sync_review_controls_enabled_while_verdict_awaits_review() -> None:
     case_file = _verdict_case_file()
 
-    accept_update, reject_update = app.sync_review_controls(case_file)
+    accept_update, reject_update, reinvestigate_update = app.sync_review_controls(case_file)
 
     assert accept_update["interactive"] is True
     assert reject_update["interactive"] is True
+    assert reinvestigate_update["interactive"] is True
 
 
 def test_sync_review_controls_disabled_once_verdict_is_decided() -> None:
     case_file = _verdict_case_file()
     case_file.accept_verdict()
 
-    accept_update, reject_update = app.sync_review_controls(case_file)
+    accept_update, reject_update, reinvestigate_update = app.sync_review_controls(case_file)
 
     assert accept_update["interactive"] is False
     assert reject_update["interactive"] is False
+    assert reinvestigate_update["interactive"] is False
+
+
+def test_sync_review_controls_disabled_once_reinvestigation_is_requested() -> None:
+    case_file = _verdict_case_file()
+    case_file.request_reinvestigation("Reconsider the housekeeper's alibi.")
+
+    accept_update, reject_update, reinvestigate_update = app.sync_review_controls(case_file)
+
+    assert accept_update["interactive"] is False
+    assert reject_update["interactive"] is False
+    assert reinvestigate_update["interactive"] is False
 
 
 def test_handle_accept_verdict_records_decision_and_disables_controls() -> None:
     case_file = _verdict_case_file()
 
-    verdict_markdown, updated_case_file, accept_update, reject_update = (
+    verdict_markdown, updated_case_file, accept_update, reject_update, reinvestigate_update = (
         app.handle_accept_verdict(case_file)
     )
 
@@ -253,12 +268,13 @@ def test_handle_accept_verdict_records_decision_and_disables_controls() -> None:
     assert "Human decision: Accepted." in verdict_markdown
     assert accept_update["interactive"] is False
     assert reject_update["interactive"] is False
+    assert reinvestigate_update["interactive"] is False
 
 
 def test_handle_reject_verdict_records_decision_and_disables_controls() -> None:
     case_file = _verdict_case_file()
 
-    verdict_markdown, updated_case_file, accept_update, reject_update = (
+    verdict_markdown, updated_case_file, accept_update, reject_update, reinvestigate_update = (
         app.handle_reject_verdict(case_file)
     )
 
@@ -266,17 +282,19 @@ def test_handle_reject_verdict_records_decision_and_disables_controls() -> None:
     assert "Human decision: Rejected." in verdict_markdown
     assert accept_update["interactive"] is False
     assert reject_update["interactive"] is False
+    assert reinvestigate_update["interactive"] is False
 
 
-def test_disable_review_controls_always_disables_both_buttons() -> None:
-    accept_update, reject_update = app.disable_review_controls()
+def test_disable_review_controls_always_disables_all_three_buttons() -> None:
+    accept_update, reject_update, reinvestigate_update = app.disable_review_controls()
 
     assert accept_update["interactive"] is False
     assert reject_update["interactive"] is False
+    assert reinvestigate_update["interactive"] is False
 
 
 def test_handle_accept_verdict_with_no_case_file_is_a_predictable_no_op() -> None:
-    verdict_markdown, updated_case_file, accept_update, reject_update = (
+    verdict_markdown, updated_case_file, accept_update, reject_update, reinvestigate_update = (
         app.handle_accept_verdict(None)
     )
 
@@ -284,13 +302,14 @@ def test_handle_accept_verdict_with_no_case_file_is_a_predictable_no_op() -> Non
     assert updated_case_file is None
     assert accept_update["interactive"] is False
     assert reject_update["interactive"] is False
+    assert reinvestigate_update["interactive"] is False
 
 
 def test_repeated_accept_after_reject_does_not_flip_the_recorded_decision() -> None:
     case_file = _verdict_case_file()
     app.handle_reject_verdict(case_file)
 
-    verdict_markdown, updated_case_file, accept_update, reject_update = (
+    verdict_markdown, updated_case_file, accept_update, reject_update, reinvestigate_update = (
         app.handle_accept_verdict(case_file)
     )
 
@@ -298,6 +317,7 @@ def test_repeated_accept_after_reject_does_not_flip_the_recorded_decision() -> N
     assert "Human decision: Rejected." in verdict_markdown
     assert accept_update["interactive"] is False
     assert reject_update["interactive"] is False
+    assert reinvestigate_update["interactive"] is False
 
 
 @pytest.mark.parametrize("first_specialist", ["timeline", "suspect"])
@@ -336,3 +356,78 @@ def test_complete_displayed_pipeline_includes_both_specialists_in_either_order(
     assert "proposal pending human review" in verdict
     assert case_file is not None
     assert case_file.verdict.review_status is VerdictReviewStatus.AWAITING_REVIEW
+
+
+def test_run_reinvestigation_on_an_already_decided_verdict_is_a_predictable_no_op(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app, "EnvLLMClient", lambda: DisplayLLM())
+    case_file = _verdict_case_file()
+    case_file.accept_verdict()
+
+    updates = list(app.run_reinvestigation(case_file, "prior transcript", "Some guidance."))
+
+    transcript, _, _, _, _, verdict, returned_case_file = updates[-1]
+    assert transcript == "prior transcript"
+    assert returned_case_file is case_file
+    assert returned_case_file.verdict.review_status is VerdictReviewStatus.ACCEPTED
+    assert "Human decision: Accepted." in verdict
+
+
+def test_run_reinvestigation_with_no_case_file_is_a_predictable_no_op() -> None:
+    updates = list(app.run_reinvestigation(None, "prior transcript", "Some guidance."))
+
+    transcript, evidence, suspects, timeline, skeptic, verdict, case_file = updates[-1]
+    assert transcript == "prior transcript"
+    assert evidence == ""
+    assert verdict == "_No verdict yet._"
+    assert case_file is None
+
+
+def test_run_reinvestigation_with_blank_note_shows_validation_message_and_preserves_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app, "EnvLLMClient", lambda: DisplayLLM())
+    investigation_updates = list(app.run_investigation("A lens vanished from an observatory."))
+    prior_transcript, _, _, _, _, _, case_file = investigation_updates[-1]
+
+    updates = list(app.run_reinvestigation(case_file, prior_transcript, "   "))
+
+    new_transcript, _, suspects, _, _, verdict, returned_case_file = updates[-1]
+    assert "Enter a guidance note" in new_transcript
+    assert prior_transcript in new_transcript
+    assert returned_case_file is case_file
+    assert returned_case_file.human_notes == []
+    assert returned_case_file.verdict.review_status is VerdictReviewStatus.AWAITING_REVIEW
+    assert "The Astronomer" in suspects
+    assert "proposal pending human review" in verdict
+
+
+def test_run_reinvestigation_continues_the_transcript_with_a_distinguishable_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app, "EnvLLMClient", lambda: DisplayLLM())
+    investigation_updates = list(app.run_investigation("A lens vanished from an observatory."))
+    prior_transcript, _, _, _, _, _, case_file = investigation_updates[-1]
+
+    reinvestigation_updates = list(
+        app.run_reinvestigation(case_file, prior_transcript, "Evidence C-2 is unavailable.")
+    )
+    new_transcript, evidence, suspects, timeline, skeptic, verdict, new_case_file = (
+        reinvestigation_updates[-1]
+    )
+
+    assert new_transcript.count("Lead Detective finished") == 2
+    assert "Human decision: Re-investigation requested." in new_transcript
+    assert "🔁 Re-investigation requested: Evidence C-2 is unavailable." in new_transcript
+    boundary_index = new_transcript.index("Human decision: Re-investigation requested.")
+    assert new_transcript.index("Evidence Collector finished") < boundary_index
+    assert boundary_index < new_transcript.index(
+        "🔁 Re-investigation requested: Evidence C-2 is unavailable."
+    )
+    assert "C-2" in evidence
+    assert "The Astronomer" in suspects
+    assert "Round 1: Approved" in skeptic
+    assert "proposal pending human review" in verdict
+    assert new_case_file.human_notes == ["Evidence C-2 is unavailable."]
+    assert new_case_file.verdict.review_status is VerdictReviewStatus.AWAITING_REVIEW

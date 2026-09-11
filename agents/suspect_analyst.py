@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from agents._shared import (
     format_evidence_prompt,
+    format_human_guidance,
     format_review_feedback,
     require_evidence_ids,
     validate_known_evidence_ids,
@@ -26,7 +27,8 @@ SYSTEM_PROMPT = (
     "claim, mark that claim as unknown instead of presenting a guess as "
     "fact. If review feedback about specific claims is included below, "
     "revise those claims to address the concern, downgrading a claim to "
-    "unknown if the evidence truly does not support it."
+    "unknown if the evidence truly does not support it. If human "
+    "re-investigation guidance is included below, follow it for this pass."
 )
 
 _CLAIM_SCHEMA = {
@@ -67,6 +69,9 @@ class SuspectAnalyst:
 
     def run(self, case_file: CaseFile) -> CaseFile:
         prompt = format_evidence_prompt(case_file)
+        guidance = format_human_guidance(case_file)
+        if guidance:
+            prompt = f"{prompt}\n\n{guidance}"
         feedback = format_review_feedback(case_file, Specialist.SUSPECT_ANALYST)
         if feedback:
             prompt = f"{prompt}\n\n{feedback}"

@@ -30,6 +30,18 @@ it is not a decision until a human reviews it.
 _Avoid_: final answer, resolution
 
 **Human decision**:
-The Accept or Reject outcome a person records for a verdict that is
-awaiting human review. A verdict without one remains a proposal.
+The Accept, Reject, or Request re-investigation outcome a person records
+for a verdict that is awaiting human review. A verdict without one
+remains a proposal.
 _Avoid_: approval, final answer
+
+**Guidance note**:
+The non-empty note a human attaches when requesting re-investigation,
+retained on the case file and available to every agent that reruns.
+_Avoid_: prompt, comment
+
+**Re-investigation**:
+A restart of suspect analysis, timeline reconciliation, Skeptic review, and
+verdict synthesis against the original mystery and evidence plus the
+human's guidance note. The Evidence Collector does not rerun.
+_Avoid_: retry, redo

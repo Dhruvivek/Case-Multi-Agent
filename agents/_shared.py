@@ -22,6 +22,22 @@ def format_evidence_prompt(case_file: CaseFile) -> str:
     return f"Mystery:\n{case_file.mystery_text}\n\nEvidence:\n{evidence_lines}"
 
 
+def format_human_guidance(case_file: CaseFile) -> str | None:
+    """Return prior human re-investigation guidance, if any was recorded.
+
+    Returns `None` when no re-investigation has been requested yet.
+    """
+    if not case_file.human_notes:
+        return None
+    note_lines = "\n".join(f"- {note}" for note in case_file.human_notes)
+    return (
+        "A human reviewer requested re-investigation with this guidance. "
+        "Follow it, including excluding any evidence it says is "
+        "unavailable, while still citing only evidence IDs that exist in "
+        "the case file:\n" + note_lines
+    )
+
+
 def format_review_feedback(case_file: CaseFile, specialist: Specialist) -> str | None:
     """Return prior-round review feedback for one specialist, if a revision was requested.
 

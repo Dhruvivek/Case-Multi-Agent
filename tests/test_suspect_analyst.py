@@ -131,6 +131,41 @@ def test_suspect_analyst_rejects_supported_claims_without_citations() -> None:
         SuspectAnalyst(llm).run(case_file)
 
 
+def _minimal_response() -> dict:
+    return {
+        "suspects": [
+            {
+                "name": "The Housekeeper",
+                "motive": [
+                    {"statement": "Owed the victim money.", "status": "unknown", "evidence_ids": []}
+                ],
+                "opportunity": [
+                    {"statement": "Unknown.", "status": "unknown", "evidence_ids": []}
+                ],
+            }
+        ]
+    }
+
+
+def test_suspect_analyst_includes_human_guidance_in_the_prompt_when_present() -> None:
+    llm = StubLLM(response=_minimal_response())
+    case_file = _case_file_with_evidence()
+    case_file.human_notes = ["Evidence E-01 is unavailable; do not rely on it."]
+
+    SuspectAnalyst(llm).run(case_file)
+
+    assert "Evidence E-01 is unavailable; do not rely on it." in llm.prompts[0]
+
+
+def test_suspect_analyst_prompt_omits_guidance_section_without_human_notes() -> None:
+    llm = StubLLM(response=_minimal_response())
+    case_file = _case_file_with_evidence()
+
+    SuspectAnalyst(llm).run(case_file)
+
+    assert "human reviewer" not in llm.prompts[0].lower()
+
+
 def test_suspect_analyst_only_updates_its_own_case_file_section() -> None:
     llm = StubLLM(
         response={

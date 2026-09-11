@@ -16,6 +16,7 @@ from case_file import CaseFile, Specialist, SkepticReviewOutcome
 from llm_client import LLMClient
 
 EMPTY_MYSTERY_MESSAGE = "Enter a fictional mystery before starting an investigation."
+EMPTY_GUIDANCE_MESSAGE = "Enter a guidance note before requesting re-investigation."
 
 _SPECIALIST_AGENTS = {
     Specialist.SUSPECT_ANALYST: SuspectAnalyst,
@@ -39,6 +40,7 @@ class InvestigationEventKind(Enum):
     SPECIALIST_REVISION_COMPLETED = auto()
     LEAD_DETECTIVE_STARTED = auto()
     LEAD_DETECTIVE_COMPLETED = auto()
+    REINVESTIGATION_REQUESTED = auto()
 
 
 @dataclass
@@ -76,6 +78,44 @@ def stream_investigation(mystery_text: str, llm: LLMClient) -> Iterator[Investig
         case_file=case_file,
     )
 
+    yield from _run_analysis_and_verdict(case_file, llm)
+
+
+def stream_reinvestigation(
+    case_file: CaseFile, note: str, llm: LLMClient
+) -> Iterator[InvestigationEvent]:
+    """Restart the pipeline from suspect analysis with a human guidance note.
+
+    Reuses `case_file`'s existing mystery text and evidence rather than
+    rerunning the Evidence Collector. A blank `note` yields a validation
+    event against the unchanged `case_file` instead of starting a pass.
+    Raises whatever the underlying agent raises, same as
+    `stream_investigation`.
+    """
+    if not note.strip():
+        yield InvestigationEvent(
+            kind=InvestigationEventKind.VALIDATION_ERROR,
+            message=EMPTY_GUIDANCE_MESSAGE,
+            case_file=case_file,
+        )
+        return
+
+    case_file.request_reinvestigation(note)
+    yield InvestigationEvent(
+        kind=InvestigationEventKind.REINVESTIGATION_REQUESTED,
+        case_file=case_file,
+        message=note,
+    )
+
+    yield from _run_analysis_and_verdict(case_file, llm)
+
+
+def _run_analysis_and_verdict(case_file: CaseFile, llm: LLMClient) -> Iterator[InvestigationEvent]:
+    """Run specialist analysis through a fresh verdict against `case_file`.
+
+    Shared by a fresh investigation (after evidence collection) and a
+    re-investigation restart (after evidence reuse and human guidance).
+    """
     evidence_snapshot = case_file.model_copy(deep=True)
     with ThreadPoolExecutor(max_workers=2) as executor:
         future_kinds: dict[Future[CaseFile], InvestigationEventKind] = {

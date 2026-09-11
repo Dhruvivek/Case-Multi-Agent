@@ -6,8 +6,24 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from case_file import Specialist, SkepticReviewOutcome
-from orchestrator import InvestigationEventKind, stream_investigation
+from case_file import (
+    CaseFile,
+    Conclusion,
+    EvidenceClassification,
+    EvidenceItem,
+    Specialist,
+    SkepticReview,
+    SkepticReviewOutcome,
+    Verdict,
+    VerdictReviewError,
+    VerdictReviewStatus,
+)
+from orchestrator import (
+    EMPTY_GUIDANCE_MESSAGE,
+    InvestigationEventKind,
+    stream_investigation,
+    stream_reinvestigation,
+)
 
 
 def _expected_response_key(system: str) -> str:
@@ -512,3 +528,153 @@ def test_skeptic_review_becomes_exhausted_after_one_revision_round() -> None:
     assert final_review.findings[0].claim == revised_claim
     assert final_case_file.verdict is not None
     assert final_case_file.verdict.limitations != ()
+
+
+def _case_file_awaiting_reinvestigation() -> CaseFile:
+    case_file = CaseFile(mystery_text="A necklace vanished from the study.")
+    case_file.evidence = [
+        EvidenceItem(
+            id="K-1",
+            statement="The housekeeper's key card unlocked the study at midnight.",
+            classification=EvidenceClassification.OBSERVED_FACT,
+        )
+    ]
+    case_file.verdict = Verdict(
+        conclusions=(
+            Conclusion(
+                rank=1,
+                suspect="The Housekeeper",
+                explanation="The key card places her at the scene.",
+                evidence_ids=("K-1",),
+            ),
+        ),
+        confidence=60,
+    )
+    return case_file
+
+
+def test_reinvestigation_restarts_from_suspect_analysis_without_the_evidence_collector() -> None:
+    case_file = _case_file_awaiting_reinvestigation()
+    llm = StubLLM(
+        responses=[
+            _suspects_response("The key card was used at midnight; who held it is unknown."),
+            _events_response("The study was unlocked."),
+            {"findings": []},
+            _verdict_response(),
+        ]
+    )
+
+    events = list(stream_reinvestigation(case_file, "Evidence K-1 is unavailable.", llm))
+
+    assert [event.kind for event in events] == [
+        InvestigationEventKind.REINVESTIGATION_REQUESTED,
+        InvestigationEventKind.SUSPECT_ANALYSIS_STARTED,
+        InvestigationEventKind.TIMELINE_RECONCILIATION_STARTED,
+        InvestigationEventKind.SUSPECT_ANALYSIS_COMPLETED,
+        InvestigationEventKind.TIMELINE_RECONCILIATION_COMPLETED,
+        InvestigationEventKind.SKEPTIC_REVIEW_STARTED,
+        InvestigationEventKind.SKEPTIC_REVIEW_APPROVED,
+        InvestigationEventKind.LEAD_DETECTIVE_STARTED,
+        InvestigationEventKind.LEAD_DETECTIVE_COMPLETED,
+    ]
+    assert all("Evidence Collector" not in prompt for prompt in llm.prompts)
+
+
+def test_reinvestigation_reuses_the_original_mystery_and_evidence() -> None:
+    case_file = _case_file_awaiting_reinvestigation()
+    original_mystery_text = case_file.mystery_text
+    original_evidence = list(case_file.evidence)
+    llm = StubLLM(
+        responses=[
+            _suspects_response("The key card was used at midnight; who held it is unknown."),
+            _events_response("The study was unlocked."),
+            {"findings": []},
+            _verdict_response(),
+        ]
+    )
+
+    events = list(stream_reinvestigation(case_file, "Evidence K-1 is unavailable.", llm))
+
+    final_case_file = events[-1].case_file
+    assert final_case_file.mystery_text == original_mystery_text
+    assert final_case_file.evidence == original_evidence
+
+
+def test_reinvestigation_propagates_the_human_note_to_the_specialist_prompts() -> None:
+    case_file = _case_file_awaiting_reinvestigation()
+    llm = StubLLM(
+        responses=[
+            _suspects_response("The key card was used at midnight; who held it is unknown."),
+            _events_response("The study was unlocked."),
+            {"findings": []},
+            _verdict_response(),
+        ]
+    )
+    note = "Evidence K-1 is unavailable; do not rely on it."
+
+    list(stream_reinvestigation(case_file, note, llm))
+
+    assert any(note in prompt for prompt in llm.prompts)
+
+
+def test_reinvestigation_resets_review_state_and_produces_a_fresh_verdict() -> None:
+    case_file = _case_file_awaiting_reinvestigation()
+    case_file.skeptic_reviews = [SkepticReview(outcome=SkepticReviewOutcome.APPROVED)]
+    case_file.revised_specialists = {Specialist.SUSPECT_ANALYST}
+    original_verdict = case_file.verdict
+    llm = StubLLM(
+        responses=[
+            _suspects_response("The key card was used at midnight; who held it is unknown."),
+            _events_response("The study was unlocked."),
+            {"findings": []},
+            _verdict_response(suspect="The Groundskeeper", evidence_id="K-1"),
+        ]
+    )
+
+    events: list = []
+    reinvestigation_review_status: VerdictReviewStatus | None = None
+    for event in stream_reinvestigation(case_file, "Evidence K-1 is unavailable.", llm):
+        events.append(event)
+        if event.kind is InvestigationEventKind.REINVESTIGATION_REQUESTED:
+            # Captured mid-stream: `case_file` is mutated and re-yielded in
+            # place, so this must be read before later stages overwrite it.
+            reinvestigation_review_status = event.case_file.verdict.review_status
+
+    reinvestigation_event = events[0]
+    assert reinvestigation_event.kind is InvestigationEventKind.REINVESTIGATION_REQUESTED
+    assert reinvestigation_event.message == "Evidence K-1 is unavailable."
+    assert reinvestigation_review_status is VerdictReviewStatus.REINVESTIGATION_REQUESTED
+
+    final_case_file = events[-1].case_file
+    assert final_case_file.revised_specialists == set()
+    assert len(final_case_file.skeptic_reviews) == 1
+    assert final_case_file.skeptic_reviews[0].outcome is SkepticReviewOutcome.APPROVED
+    assert final_case_file.human_notes == ["Evidence K-1 is unavailable."]
+    assert final_case_file.verdict is not original_verdict
+    assert final_case_file.verdict.conclusions[0].suspect == "The Groundskeeper"
+    assert final_case_file.verdict.review_status is VerdictReviewStatus.AWAITING_REVIEW
+
+
+def test_reinvestigation_on_an_already_decided_verdict_raises_predictable_error() -> None:
+    case_file = _case_file_awaiting_reinvestigation()
+    case_file.accept_verdict()
+    llm = StubLLM(responses=[])
+
+    with pytest.raises(VerdictReviewError):
+        list(stream_reinvestigation(case_file, "Evidence K-1 is unavailable.", llm))
+
+    assert llm.prompts == []
+
+
+def test_empty_guidance_note_produces_validation_event_without_calling_the_llm() -> None:
+    case_file = _case_file_awaiting_reinvestigation()
+    llm = StubLLM(responses=[])
+
+    events = list(stream_reinvestigation(case_file, "   ", llm))
+
+    assert [event.kind for event in events] == [InvestigationEventKind.VALIDATION_ERROR]
+    assert events[0].message == EMPTY_GUIDANCE_MESSAGE
+    assert events[0].case_file is case_file
+    assert llm.prompts == []
+    assert case_file.human_notes == []
+    assert case_file.verdict.review_status is VerdictReviewStatus.AWAITING_REVIEW

@@ -52,6 +52,40 @@ def _case_file_with_evidence() -> CaseFile:
     return case_file
 
 
+def _minimal_response() -> dict:
+    return {
+        "events": [
+            {
+                "statement": "The archive was locked.",
+                "time": "9:00 PM",
+                "order": 1,
+                "status": "supported",
+                "evidence_ids": ["R-7"],
+            }
+        ],
+        "issues": [],
+    }
+
+
+def test_timeline_reconciler_includes_human_guidance_in_the_prompt_when_present() -> None:
+    llm = StubLLM(response=_minimal_response())
+    case_file = _case_file_with_evidence()
+    case_file.human_notes = ["Evidence R-14 is unavailable; do not rely on it."]
+
+    TimelineReconciler(llm).run(case_file)
+
+    assert "Evidence R-14 is unavailable; do not rely on it." in llm.prompts[0]
+
+
+def test_timeline_reconciler_prompt_omits_guidance_section_without_human_notes() -> None:
+    llm = StubLLM(response=_minimal_response())
+    case_file = _case_file_with_evidence()
+
+    TimelineReconciler(llm).run(case_file)
+
+    assert "human reviewer" not in llm.prompts[0].lower()
+
+
 def test_timeline_reconciler_builds_events_and_evidence_cited_issues() -> None:
     llm = StubLLM(
         response={
